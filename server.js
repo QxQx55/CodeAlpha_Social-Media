@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const TOKEN_COOKIE = "token";
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -52,12 +52,22 @@ function optionalAuth(req, _res, next) {
 
 function safeUser(row) {
   if (!row) return null;
-  return { id: row.id, username: row.username, bio: row.bio || "", created_at: row.created_at };
+  return {
+    id: row.id,
+    username: row.username,
+    bio: row.bio || "",
+    avatar_url: row.avatar_url || "",
+    created_at: row.created_at,
+  };
+}
+
+function isHttpUrl(value) {
+  return /^https?:\/\/.+/i.test(value);
 }
 
 async function getProfile(username, viewerId) {
   const user = await get(
-    "SELECT id, username, bio, created_at FROM users WHERE username = ? COLLATE NOCASE",
+    "SELECT id, username, bio, avatar_url, created_at FROM users WHERE username = ? COLLATE NOCASE",
     [username]
   );
   if (!user) return null;
@@ -81,16 +91,17 @@ async function getProfile(username, viewerId) {
 
 async function getPostWithMeta(postId, viewerId) {
   const post = await get(
-    `SELECT p.id, p.content, p.created_at, u.id AS user_id, u.username
+    `SELECT p.id, p.content, p.image_url, p.created_at, u.id AS user_id, u.username, u.avatar_url
      FROM posts p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
     [postId]
   );
   if (!post) return null;
-  const [likes, liked, comments] = await Promise.all([
+  const [likes, liked, saved, comments] = await Promise.all([
     get("SELECT COUNT(*) AS count FROM likes WHERE post_id = ?", [postId]),
     viewerId ? get("SELECT 1 AS ok FROM likes WHERE user_id = ? AND post_id = ?", [viewerId, postId]) : null,
+    viewerId ? get("SELECT 1 AS ok FROM saved_posts WHERE user_id = ? AND post_id = ?", [viewerId, postId]) : null,
     all(
-      `SELECT c.id, c.content, c.created_at, u.id AS user_id, u.username
+      `SELECT c.id, c.content, c.created_at, u.id AS user_id, u.username, u.avatar_url
        FROM comments c JOIN users u ON u.id = c.user_id
        WHERE c.post_id = ? ORDER BY c.created_at ASC`,
       [postId]
@@ -99,12 +110,20 @@ async function getPostWithMeta(postId, viewerId) {
   return {
     id: post.id,
     content: post.content,
+    image_url: post.image_url || "",
     created_at: post.created_at,
-    author: { id: post.user_id, username: post.username },
+    author: { id: post.user_id, username: post.username, avatar_url: post.avatar_url || "" },
     likes: likes.count,
     liked: !!liked,
+    saved: !!saved,
     comments,
   };
+}
+
+async function hydratePosts(ids, viewerId) {
+  const full = [];
+  for (const p of ids) full.push(await getPostWithMeta(p.id, viewerId));
+  return full.filter(Boolean);
 }
 
 // Auth
@@ -159,6 +178,65 @@ app.get("/api/auth/me", optionalAuth, async (req, res) => {
 });
 
 // Users / profiles
+app.get("/api/users/search", optionalAuth, async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (!q) return res.json({ users: [] });
+    const like = `%${q.replace(/[%_]/g, "")}%`;
+    const rows = await all(
+      `SELECT id, username, bio, avatar_url FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username ASC LIMIT 20`,
+      [like]
+    );
+    res.json({ users: rows.map(safeUser) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/users/suggested", optionalAuth, async (req, res) => {
+  try {
+    const viewerId = req.user?.id || -1;
+    const rows = await all(
+      `SELECT u.id, u.username, u.bio, u.avatar_url,
+              (SELECT COUNT(*) FROM followers f WHERE f.following_id = u.id) AS followers
+       FROM users u
+       WHERE u.id != ?
+         AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id)
+       ORDER BY (SELECT COUNT(*) FROM follows f2 WHERE f2.following_id = u.id) DESC, u.created_at DESC
+       LIMIT 5`,
+      [viewerId, viewerId]
+    ).catch(async () => {
+      // fallback if alias issue; simple query
+      return all(
+        `SELECT u.id, u.username, u.bio, u.avatar_url
+         FROM users u
+         WHERE u.id != ?
+         ORDER BY u.created_at DESC LIMIT 5`,
+        [viewerId]
+      );
+    });
+    res.json({ users: rows.map((r) => ({ ...safeUser(r), followers: r.followers || 0 })) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.patch("/api/users/me", authRequired, async (req, res) => {
+  try {
+    const bio = String(req.body.bio ?? "").trim().slice(0, 200);
+    const avatar_url = String(req.body.avatar_url ?? "").trim().slice(0, 500);
+    if (avatar_url && !isHttpUrl(avatar_url)) return res.status(400).json({ error: "Avatar must be a valid http(s) URL" });
+    await run("UPDATE users SET bio = ?, avatar_url = ? WHERE id = ?", [bio, avatar_url, req.user.id]);
+    const me = await get("SELECT username FROM users WHERE id = ?", [req.user.id]);
+    res.json({ user: await getProfile(me.username, req.user.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 app.get("/api/users/:username", optionalAuth, async (req, res) => {
   try {
     const profile = await getProfile(req.params.username, req.user?.id);
@@ -175,12 +253,40 @@ app.get("/api/users/:username/posts", optionalAuth, async (req, res) => {
     const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
     const posts = await all(
-      `SELECT p.id FROM posts p WHERE p.user_id = ? ORDER BY p.created_at DESC, p.id DESC`,
+      `SELECT id FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC`,
       [user.id]
     );
-    const full = [];
-    for (const p of posts) full.push(await getPostWithMeta(p.id, req.user?.id));
-    res.json({ posts: full });
+    res.json({ posts: await hydratePosts(posts, req.user?.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/users/:username/followers", optionalAuth, async (req, res) => {
+  try {
+    const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const rows = await all(
+      `SELECT u.id, u.username, u.bio, u.avatar_url FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=? ORDER BY f.created_at DESC`,
+      [user.id]
+    );
+    res.json({ users: rows.map(safeUser) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/users/:username/following", optionalAuth, async (req, res) => {
+  try {
+    const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const rows = await all(
+      `SELECT u.id, u.username, u.bio, u.avatar_url FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=? ORDER BY f.created_at DESC`,
+      [user.id]
+    );
+    res.json({ users: rows.map(safeUser) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -215,12 +321,47 @@ app.delete("/api/users/:username/follow", authRequired, async (req, res) => {
 // Posts
 app.get("/api/posts", optionalAuth, async (req, res) => {
   try {
-    const posts = await all(
-      `SELECT id FROM posts ORDER BY created_at DESC, id DESC LIMIT 50`
+    const feed = String(req.query.feed || "all");
+    let rows;
+    if (feed === "following" && req.user) {
+      rows = await all(
+        `SELECT id FROM posts WHERE user_id IN (SELECT following_id FROM follows WHERE follower_id = ?) OR user_id = ?
+         ORDER BY created_at DESC, id DESC LIMIT 50`,
+        [req.user.id, req.user.id]
+      );
+    } else {
+      rows = await all(`SELECT id FROM posts ORDER BY created_at DESC, id DESC LIMIT 50`);
+    }
+    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/posts/explore", optionalAuth, async (req, res) => {
+  try {
+    const rows = await all(
+      `SELECT p.id FROM posts p
+       LEFT JOIN likes l ON l.post_id = p.id
+       GROUP BY p.id
+       ORDER BY COUNT(l.user_id) DESC, p.created_at DESC
+       LIMIT 30`
     );
-    const full = [];
-    for (const p of posts) full.push(await getPostWithMeta(p.id, req.user?.id));
-    res.json({ posts: full });
+    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/posts/saved", authRequired, async (req, res) => {
+  try {
+    const rows = await all(
+      `SELECT p.id FROM saved_posts s JOIN posts p ON p.id = s.post_id WHERE s.user_id = ? ORDER BY s.created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ posts: await hydratePosts(rows, req.user.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -230,10 +371,25 @@ app.get("/api/posts", optionalAuth, async (req, res) => {
 app.post("/api/posts", authRequired, async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
-    if (!content) return res.status(400).json({ error: "Post content is required" });
-    if (content.length > 500) return res.status(400).json({ error: "Post must be 500 characters or less" });
-    const result = await run("INSERT INTO posts (user_id, content) VALUES (?, ?)", [req.user.id, content]);
+    const image_url = String(req.body.image_url || "").trim().slice(0, 500);
+    if (!content && !image_url) return res.status(400).json({ error: "Post must have text or an image URL" });
+    if (content.length > 700) return res.status(400).json({ error: "Post must be 700 characters or less" });
+    if (image_url && !isHttpUrl(image_url)) return res.status(400).json({ error: "Image must be a valid http(s) URL" });
+    const result = await run("INSERT INTO posts (user_id, content, image_url) VALUES (?, ?, ?)", [req.user.id, content, image_url]);
     res.status(201).json({ post: await getPostWithMeta(result.id, req.user.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/posts/:id", authRequired, async (req, res) => {
+  try {
+    const post = await get("SELECT id, user_id FROM posts WHERE id = ?", [req.params.id]);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    if (post.user_id !== req.user.id) return res.status(403).json({ error: "Not allowed" });
+    await run("DELETE FROM posts WHERE id = ?", [post.id]);
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -264,6 +420,30 @@ app.delete("/api/posts/:id/like", authRequired, async (req, res) => {
   }
 });
 
+app.post("/api/posts/:id/save", authRequired, async (req, res) => {
+  try {
+    const post = await get("SELECT id FROM posts WHERE id = ?", [req.params.id]);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    await run("INSERT OR IGNORE INTO saved_posts (user_id, post_id) VALUES (?, ?)", [req.user.id, post.id]);
+    res.json({ post: await getPostWithMeta(post.id, req.user.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/posts/:id/save", authRequired, async (req, res) => {
+  try {
+    const post = await get("SELECT id FROM posts WHERE id = ?", [req.params.id]);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    await run("DELETE FROM saved_posts WHERE user_id = ? AND post_id = ?", [req.user.id, post.id]);
+    res.json({ post: await getPostWithMeta(post.id, req.user.id) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 app.post("/api/posts/:id/comments", authRequired, async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
@@ -279,7 +459,22 @@ app.post("/api/posts/:id/comments", authRequired, async (req, res) => {
   }
 });
 
-// SPA-ish fallback
+app.delete("/api/comments/:id", authRequired, async (req, res) => {
+  try {
+    const comment = await get("SELECT id, user_id, post_id FROM comments WHERE id = ?", [req.params.id]);
+    if (!comment) return res.status(404).json({ error: "Comment not found" });
+    const post = await get("SELECT user_id FROM posts WHERE id = ?", [comment.post_id]);
+    if (comment.user_id !== req.user.id && post?.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Not allowed" });
+    }
+    await run("DELETE FROM comments WHERE id = ?", [comment.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });

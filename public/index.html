@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wave</title>
+  <title>Wave — Share moments</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -19,8 +19,7 @@
           <svg width="34" height="34" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="wg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#2f6f62"/>
-                <stop offset="1" stop-color="#7aa58f"/>
+                <stop stop-color="#2f6f62"/><stop offset="1" stop-color="#7aa58f"/>
               </linearGradient>
             </defs>
             <rect x="4" y="4" width="56" height="56" rx="18" fill="url(#wg)"/>
@@ -32,14 +31,18 @@
 
       <div class="search-wrap">
         <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-        <input id="global-search" type="search" placeholder="Search people..." autocomplete="off">
+        <input id="global-search" type="search" placeholder="Search people, posts, tags..." autocomplete="off">
         <div id="search-results" class="search-results hidden"></div>
       </div>
 
       <nav class="nav-actions">
         <a href="#/" class="nav-btn" data-nav="feed" title="Home"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9.5z"/></svg></a>
+        <a href="#/search" class="nav-btn search-mobile" data-nav="search" title="Search"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></a>
         <a href="#/explore" class="nav-btn" data-nav="explore" title="Explore"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M16 8l-2 6-6 2 2-6 6-2z"/></svg></a>
-        <a href="#/saved" class="nav-btn auth-only hidden" data-nav="saved" title="Saved"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h12a1 1 0 011 1v16l-7-4-7 4V5a1 1 0 011-1z"/></svg></a>
+        <a href="#/reels" class="nav-btn" data-nav="reels" title="Reels"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 9h18M8 3l3 6M15 3l3 6"/><path d="M10 13l5 3-5 3z"/></svg></a>
+        <a href="#/messages" class="nav-btn auth-only hidden" data-nav="messages" title="Messages"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-8.5 8.5 9 9 0 01-4-.9L3 21l1.9-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="badge hidden" id="msg-badge"></span></a>
+        <a href="#/notifications" class="nav-btn auth-only hidden" data-nav="notifications" title="Activity"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span class="badge hidden" id="notif-badge"></span></a>
+        <button class="nav-btn auth-only hidden" id="create-btn" title="Create"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg></button>
         <a href="#/profile/me" class="nav-btn auth-only hidden" data-nav="profile" id="nav-profile-btn" title="Profile"><span class="nav-avatar" id="nav-avatar">?</span></a>
         <div id="auth-actions"></div>
       </nav>
@@ -50,7 +53,7 @@
     <section class="feed-col">
       <div id="message" class="toast hidden"></div>
 
-      <!-- AUTH VIEW -->
+      <!-- AUTH -->
       <section id="view-auth" class="view hidden">
         <div class="auth-shell">
           <div class="auth-hero">
@@ -81,6 +84,7 @@
             </form>
             <form id="register-form" class="stack auth-form hidden">
               <label><span>Username</span><input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" autocomplete="username" placeholder="Choose a unique username"></label>
+              <label><span>Full name</span><input name="full_name" maxlength="80" placeholder="Your name (optional)"></label>
               <label><span>Phone number</span><input name="phone" required inputmode="tel" pattern="^\+?[0-9]{8,15}$" placeholder="+1234567890"></label>
               <label><span>Password</span><input name="password" type="password" required minlength="6" autocomplete="new-password" placeholder="At least 6 characters"></label>
               <label><span>Bio</span><textarea name="bio" maxlength="200" rows="2" placeholder="A little about you (optional)"></textarea></label>
@@ -91,69 +95,84 @@
         </div>
       </section>
 
-      <!-- FEED VIEW -->
+      <!-- FEED -->
       <section id="view-feed" class="view hidden">
+        <div id="stories-bar" class="stories-bar card hidden"></div>
         <div class="card composer" id="composer-card">
           <div class="composer-top">
             <div class="avatar sm" id="composer-avatar">?</div>
             <button class="composer-trigger" id="open-composer">What's on your mind?</button>
+            <button class="btn ghost small" id="composer-story-btn">+ Story</button>
           </div>
-          <form id="post-form" class="composer-form hidden">
-            <textarea id="post-content" maxlength="700" rows="3" placeholder="Write a caption..."></textarea>
-            <div class="media-controls">
-              <label class="btn ghost small file-btn">Upload photo<input id="post-image-file" type="file" accept="image/*" hidden></label>
-              <button type="button" class="btn ghost small" id="post-camera-btn">Use camera</button>
-              <input id="post-image" type="url" placeholder="Or paste image URL (https://...)" maxlength="500">
-            </div>
-            <div id="post-camera" class="camera-box hidden">
-              <video id="post-camera-video" autoplay playsinline muted></video>
-              <div class="camera-actions">
-                <button type="button" class="btn small primary" id="post-camera-capture">Capture</button>
-                <button type="button" class="btn small ghost" id="post-camera-stop">Close camera</button>
-              </div>
-            </div>
-            <div id="post-image-preview" class="img-preview hidden"></div>
-            <div class="composer-actions">
-              <span class="muted" id="post-count">0/700</span>
-              <div class="composer-btns">
-                <button type="button" class="btn ghost small" id="cancel-post">Cancel</button>
-                <button type="submit" class="btn primary small">Share</button>
-              </div>
-            </div>
-          </form>
         </div>
-
         <div class="feed-tabs">
           <button class="feed-tab active" data-feed="all">For you</button>
           <button class="feed-tab" data-feed="following">Following</button>
         </div>
-
         <div id="feed-list" class="posts-list"></div>
       </section>
 
-      <!-- EXPLORE VIEW -->
+      <!-- EXPLORE -->
       <section id="view-explore" class="view hidden">
-        <div class="page-head">
-          <h2>Explore</h2>
-          <p class="muted">Discover popular posts from the community</p>
-        </div>
+        <div class="page-head"><h2>Explore</h2><p class="muted">Popular posts and trending hashtags</p></div>
+        <div id="trending-tags" class="tag-row"></div>
         <div id="explore-grid" class="explore-grid"></div>
       </section>
 
-      <!-- SAVED VIEW -->
-      <section id="view-saved" class="view hidden">
-        <div class="page-head">
-          <h2>Saved</h2>
-          <p class="muted">Posts you've bookmarked</p>
+      <!-- REELS -->
+      <section id="view-reels" class="view hidden">
+        <div class="page-head"><h2>Reels</h2><p class="muted">Short videos from the community</p></div>
+        <div id="reels-list" class="reels-list"></div>
+      </section>
+
+      <!-- MESSAGES -->
+      <section id="view-messages" class="view hidden">
+        <div class="page-head"><h2>Messages</h2></div>
+        <div class="messages-shell card">
+          <div id="conversation-list" class="conversation-list"></div>
+          <div id="chat-panel" class="chat-panel">
+            <div class="chat-empty muted">Select a conversation to start chatting.</div>
+          </div>
         </div>
+        <form id="message-form" class="message-form hidden">
+          <input id="message-input" maxlength="2000" placeholder="Message..." autocomplete="off">
+          <label class="btn ghost small file-btn">Attach<input id="message-file" type="file" accept="image/*,video/*" hidden></label>
+          <button class="btn primary small" type="submit">Send</button>
+        </form>
+      </section>
+
+      <!-- NOTIFICATIONS -->
+      <section id="view-notifications" class="view hidden">
+        <div class="page-head"><h2>Activity</h2><button class="btn ghost small" id="mark-read-btn">Mark all as read</button></div>
+        <div id="notifications-list" class="notifications-list"></div>
+      </section>
+
+      <!-- SEARCH PAGE -->
+      <section id="view-search" class="view hidden">
+        <div class="page-head"><h2>Search</h2><p class="muted">Find people, posts and hashtags</p></div>
+        <input id="search-page-input" class="search-page-input" type="search" placeholder="Type to search..." autocomplete="off">
+        <div id="search-page-results" class="search-page-results"></div>
+      </section>
+
+      <!-- SINGLE POST -->
+      <section id="view-post" class="view hidden">
+        <div class="page-head"><button class="btn ghost small" id="post-back-btn">← Back</button></div>
+        <div id="post-single" class="posts-list"></div>
+      </section>
+
+      <!-- SAVED -->
+      <section id="view-saved" class="view hidden">
+        <div class="page-head"><h2>Saved</h2><p class="muted">Posts you've bookmarked</p></div>
         <div id="saved-list" class="posts-list"></div>
       </section>
 
-      <!-- PROFILE VIEW -->
+      <!-- PROFILE -->
       <section id="view-profile" class="view hidden">
         <div class="card profile-hero" id="profile-hero"></div>
         <div class="profile-tabs">
-          <button class="ptab active" data-ptab="posts"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Posts</button>
+          <button class="ptab active" data-ptab="posts">Posts</button>
+          <button class="ptab" data-ptab="reels">Reels</button>
+          <button class="ptab" data-ptab="saved">Saved</button>
         </div>
         <div id="profile-posts" class="posts-list"></div>
       </section>
@@ -173,20 +192,75 @@
     </aside>
   </main>
 
-  <!-- Edit profile modal -->
+  <!-- Generic list modal (edit profile, followers, requests) -->
   <div id="modal" class="modal hidden">
     <div class="modal-backdrop" data-close="modal"></div>
     <div class="modal-card card">
       <div class="modal-head"><h3>Edit profile</h3><button class="icon-btn" data-close="modal">&times;</button></div>
       <form id="edit-profile-form" class="stack">
+        <label><span>Full name</span><input name="full_name" maxlength="80" placeholder="Your name"></label>
         <label><span>Bio</span><textarea name="bio" maxlength="200" rows="3" placeholder="Your bio"></textarea></label>
+        <label><span>Website</span><input name="website" maxlength="200" placeholder="https://..."></label>
         <label><span>Phone number</span><input name="phone" required inputmode="tel" pattern="^\+?[0-9]{8,15}$" placeholder="+1234567890"></label>
-        <label><span>Avatar URL</span><input name="avatar_url" type="url" maxlength="500" placeholder="https://..."></label>
+        <label><span>Avatar (image URL or file)</span><input name="avatar_url" type="url" maxlength="500" placeholder="https://..."><input name="avatar_file" type="file" accept="image/*"></label>
+        <label class="check-row"><input name="is_private" type="checkbox"> Private account</label>
         <div class="modal-actions">
           <button type="button" class="btn ghost" data-close="modal">Cancel</button>
           <button type="submit" class="btn primary">Save</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Create post / reel / story -->
+  <div id="create-modal" class="modal hidden">
+    <div class="modal-backdrop" data-close="create-modal"></div>
+    <div class="modal-card card create-card">
+      <div class="modal-head"><h3>Create new</h3><button class="icon-btn" data-close="create-modal">&times;</button></div>
+      <div class="create-tabs">
+        <button class="create-tab active" data-kind="post">Post</button>
+        <button class="create-tab" data-kind="reel">Reel</button>
+        <button class="create-tab" data-kind="story">Story</button>
+      </div>
+      <form id="create-form" class="stack">
+        <textarea id="create-caption" maxlength="2200" rows="3" placeholder="Write a caption... use #hashtags and @mentions"></textarea>
+        <div class="media-controls">
+          <label class="btn ghost small file-btn">Photo / video<input id="create-file" type="file" accept="image/*,video/*" hidden></label>
+          <button type="button" class="btn ghost small" id="create-camera-btn">Use camera</button>
+          <input id="create-url" type="url" placeholder="Or paste image/video URL" maxlength="500">
+        </div>
+        <div id="create-camera" class="camera-box hidden">
+          <video id="create-camera-video" autoplay playsinline muted></video>
+          <div class="camera-actions">
+            <button type="button" class="btn small primary" id="create-capture-photo">Capture photo</button>
+            <button type="button" class="btn small primary" id="create-record-video">Record video</button>
+            <button type="button" class="btn small ghost" id="create-camera-stop">Close camera</button>
+          </div>
+        </div>
+        <div id="create-preview" class="img-preview hidden"></div>
+        <div class="modal-actions">
+          <span class="muted small" id="create-count">0/2200</span>
+          <button type="button" class="btn ghost" data-close="create-modal">Cancel</button>
+          <button type="submit" class="btn primary" id="create-share">Share</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Story viewer -->
+  <div id="story-modal" class="modal hidden">
+    <div class="modal-backdrop" data-close="story-modal"></div>
+    <div class="modal-card story-viewer">
+      <button class="story-close" data-close="story-modal">&times;</button>
+      <div id="story-progress" class="story-progress"></div>
+      <div id="story-stage" class="story-stage"></div>
+      <button class="story-nav prev" id="story-prev">‹</button>
+      <button class="story-nav next" id="story-next">›</button>
+      <div class="story-footer">
+        <span id="story-caption"></span>
+        <span id="story-views" class="muted"></span>
+        <button id="story-delete" class="btn-text danger hidden">Delete</button>
+      </div>
     </div>
   </div>
 
@@ -200,36 +274,32 @@
         </div>
         <button class="icon-btn post-more hidden" data-action="delete" title="Delete post"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
       </div>
-      <div class="post-image-wrap hidden"><img class="post-image" alt="Post image" loading="lazy"></div>
+      <div class="post-image-wrap hidden"><img class="post-image" alt="Post media" loading="lazy"><video class="post-video" controls playsinline hidden></video></div>
       <div class="post-body">
         <div class="post-actions">
           <div class="post-actions-left">
             <button class="icon-btn like-btn" data-action="like" title="Like"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg></button>
             <button class="icon-btn comment-focus-btn" data-action="focus-comment" title="Comment"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
+            <button class="icon-btn share-btn" data-action="share" title="Copy link"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
           </div>
           <button class="icon-btn save-btn" data-action="save" title="Save"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h12a1 1 0 011 1v16l-7-4-7 4V5a1 1 0 011-1z"/></svg></button>
         </div>
         <div class="post-likes"><strong class="like-count">0</strong> likes</div>
         <div class="post-caption"><button class="caption-author" data-action="profile"></button> <span class="post-content"></span></div>
+        <div class="post-tags"></div>
         <div class="post-comments-wrap">
           <button class="view-comments-btn muted hidden" data-action="toggle-comments"></button>
           <div class="comments"></div>
         </div>
         <form class="comment-form">
           <div class="comment-main-row">
-            <input name="comment" maxlength="300" placeholder="Add a comment..." autocomplete="off">
-            <label class="icon-btn comment-file-btn" title="Upload image"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg><input name="image_file" type="file" accept="image/*" hidden></label>
+            <input name="comment" maxlength="1000" placeholder="Add a comment... use @mentions" autocomplete="off">
+            <label class="icon-btn comment-file-btn" title="Upload image"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg><input name="image_file" type="file" accept="image/*,video/*" hidden></label>
             <button type="button" class="icon-btn comment-cam-btn" title="Camera"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
             <button type="submit" class="comment-submit" disabled>Post</button>
           </div>
           <div class="comment-tools hidden">
-            <div class="camera-box hidden">
-              <video autoplay playsinline muted></video>
-              <div class="camera-actions">
-                <button type="button" class="btn small primary comment-capture">Capture</button>
-                <button type="button" class="btn small ghost comment-cam-close">Close camera</button>
-              </div>
-            </div>
+            <div class="camera-box hidden"><video autoplay playsinline muted></video><div class="camera-actions"><button type="button" class="btn small primary comment-capture">Capture</button><button type="button" class="btn small ghost comment-cam-close">Close camera</button></div></div>
             <div class="comment-preview hidden"></div>
           </div>
         </form>

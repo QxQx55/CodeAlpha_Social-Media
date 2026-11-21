@@ -107,13 +107,107 @@ async function initDb() {
     )
   `);
 
+  // ── Instagram-style extensions ──────────────────────────────────────────
+  await run(`
+    CREATE TABLE IF NOT EXISTS stories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      media_url TEXT NOT NULL,
+      media_type TEXT NOT NULL DEFAULT 'image',
+      caption TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS story_views (
+      story_id INTEGER NOT NULL,
+      viewer_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (story_id, viewer_id),
+      FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE,
+      FOREIGN KEY (viewer_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS hashtags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tag TEXT NOT NULL UNIQUE COLLATE NOCASE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS post_hashtags (
+      post_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY (post_id, tag_id),
+      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+      FOREIGN KEY (tag_id) REFERENCES hashtags(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      recipient_id INTEGER NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      read_at DATETIME,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      actor_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      post_id INTEGER,
+      comment_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      read_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS follow_requests (
+      follower_id INTEGER NOT NULL,
+      following_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (follower_id, following_id),
+      FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS comment_likes (
+      user_id INTEGER NOT NULL,
+      comment_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, comment_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE
+    )
+  `);
+
   await ensureColumn("users", "avatar_url", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("users", "phone", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("users", "last_seen", "DATETIME");
+  await ensureColumn("users", "full_name", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("users", "website", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("users", "is_private", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("posts", "image_url", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("posts", "kind", "TEXT NOT NULL DEFAULT 'post'");
+  await ensureColumn("posts", "media_type", "TEXT NOT NULL DEFAULT 'image'");
   await ensureColumn("comments", "image_url", "TEXT NOT NULL DEFAULT ''");
   await run(`UPDATE users SET last_seen = COALESCE(last_seen, created_at, CURRENT_TIMESTAMP)`);
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone) WHERE phone != ''`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_posts_kind ON posts(kind, created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id, created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC)`);
 }
 
 module.exports = { db, run, get, all, initDb };

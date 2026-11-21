@@ -1,14 +1,19 @@
-# CodeAlpha Social Media Platform
+# Wave — Instagram-style Social Media Platform
 
-A mini social media app built for **CodeAlpha Task 2**. It includes user profiles, posts, comments, likes, and follow/unfollow functionality.
+A mini social media app built for **CodeAlpha Task 2**, expanded with an Instagram-like feature set. Everything is real and persisted in SQLite — posts, media, stories, reels, likes, comments, follows, DMs and notifications are stored in the database, not mocked in the browser.
 
 ## Features
 
-- **User profiles**: Register, login, bio, profile stats, and per-user post feed
-- **Posts & comments**: Create posts and comment on any post, with photo uploads or camera capture
-- **Like/follow system**: Like/unlike posts, save posts, and follow/unfollow users
-- **Search & discovery**: Find people, see suggestions, and browse popular posts
-- **Persistent database**: SQLite stores users, posts, comments, likes, follows, and saved posts
+- **Accounts & profiles**: register/login, full name, bio, website, phone, avatar (URL or upload), public/private accounts, follow requests
+- **Real media posts**: create posts with an uploaded image/video, camera capture, or a pasted media URL; hashtags and `@mentions`
+- **Stories**: photo/video stories from camera or upload, 24-hour expiry, view counts, seen state, delete your own
+- **Reels**: video/image reels with playback, likes and comments
+- **Feed**: For you / Following, double-tap to like, likes, comments (text + media), comment likes, saves, share link
+- **Explore**: popular posts, trending hashtags, hashtag filtering
+- **Direct messages**: conversation list, unread counts, text and media attachments, seen status
+- **Activity / notifications**: likes, comments, comment likes, follows, follow requests, mentions and messages
+- **Real search**: unified search across people, post captions/hashtags and tags, with instant dropdown and results page
+- **Persistence**: SQLite stores users, posts, stories, reels, media metadata, comments, likes, follows, DMs, notifications, hashtags and more
 
 ## Tech Stack
 
@@ -16,17 +21,19 @@ A mini social media app built for **CodeAlpha Task 2**. It includes user profile
 - **Backend**: Node.js, Express.js
 - **Database**: SQLite (`sqlite3`)
 - **Auth**: JWT in HTTP-only cookie + bcrypt password hashing
+- **Uploads**: multer (images + video, camera Blob uploads)
 
 ## Project Structure
 
 ```text
 .
-├── db.js               # SQLite connection and schema
-├── server.js           # Express API and static file serving
+├── db.js               # SQLite connection, schema and migrations
+├── server.js           # Express API, uploads and static file serving
 ├── public/
-│   ├── index.html      # App layout
-│   ├── styles.css      # Styling
-│   └── app.js          # Frontend logic and API calls
+│   ├── index.html      # App layout and views
+│   ├── styles.css      # Instagram-style styling
+│   ├── app.js          # Frontend logic and API calls
+│   └── uploads/        # User-uploaded photos/videos (created automatically)
 ├── package.json
 └── data.db             # Created automatically on first run
 ```
@@ -39,15 +46,21 @@ A mini social media app built for **CodeAlpha Task 2**. It includes user profile
    npm install
    ```
 
-2. Start the server:
+2. Start the server (default port 3000):
 
    ```bash
    npm start
    ```
 
-3. Open the app:
+   To run on another port (e.g. 5000):
 
-   [http://localhost:3000](http://localhost:3000)
+   ```bash
+   # Windows PowerShell
+   $env:PORT=5000
+   npm start
+   ```
+
+3. Open [http://localhost:3000](http://localhost:3000) (or your chosen port).
 
 For development with auto-restart on Node 18+:
 
@@ -57,36 +70,65 @@ npm run dev
 
 ## API Overview
 
+### Auth & users
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
-| POST | `/api/auth/register` | Register new user | No |
+| POST | `/api/auth/register` | Register (username, phone, password, full_name, bio) | No |
 | POST | `/api/auth/login` | Login | No |
 | POST | `/api/auth/logout` | Logout | Yes |
 | GET | `/api/auth/me` | Current user profile | Optional |
 | GET | `/api/users/search?q=` | Search people | Optional |
-| GET | `/api/users/suggested` | Get suggested people | Optional |
-| GET | `/api/users/:username` | Get user profile | Optional |
-| GET | `/api/users/:username/posts` | Get posts by user | Optional |
-| GET | `/api/users/:username/followers` | List followers | Optional |
-| GET | `/api/users/:username/following` | List followed users | Optional |
-| PATCH | `/api/users/me` | Update own profile | Yes |
-| POST | `/api/users/:username/follow` | Follow user | Yes |
-| DELETE | `/api/users/:username/follow` | Unfollow user | Yes |
-| POST | `/api/uploads` | Upload an image (jpg, png, gif, webp) | Yes |
-| GET | `/api/posts` | Get latest posts | Optional |
-| GET | `/api/posts/explore` | Get popular posts | Optional |
-| GET | `/api/posts/saved` | Get saved posts | Yes |
-| POST | `/api/posts` | Create post | Yes |
+| GET | `/api/users/suggested` | Suggested people | Optional |
+| GET | `/api/users/:username` | User profile | Optional |
+| GET | `/api/users/:username/posts` | Posts by user | Optional |
+| GET | `/api/users/:username/reels` | Reels by user | Optional |
+| GET | `/api/users/:username/followers` | Followers list | Optional |
+| GET | `/api/users/:username/following` | Following list | Optional |
+| PATCH | `/api/users/me` | Update profile (supports avatar upload + private flag) | Yes |
+| POST | `/api/users/:username/follow` | Follow / request to follow | Yes |
+| DELETE | `/api/users/:username/follow` | Unfollow / cancel request | Yes |
+| GET | `/api/users/me/follow-requests` | Pending follow requests | Yes |
+| POST | `/api/users/me/follow-requests/:username/accept` | Accept request | Yes |
+| DELETE | `/api/users/me/follow-requests/:username` | Decline request | Yes |
+
+### Media & posts
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| POST | `/api/uploads` | Upload a single image | Yes |
+| GET | `/api/posts?feed=all\|following` | Latest posts | Optional |
+| GET | `/api/posts/:id` | Single post | Optional |
+| GET | `/api/posts/explore?tag=` | Popular posts, optional hashtag filter | Optional |
+| GET | `/api/posts/saved` | Saved posts | Yes |
+| GET | `/api/reels` | Reels feed | Optional |
+| POST | `/api/posts` | Create post/reel (multipart `media` or `image_url`, `kind`, `content`) | Yes |
 | DELETE | `/api/posts/:id` | Delete own post | Yes |
-| POST | `/api/posts/:id/like` | Like post | Yes |
-| DELETE | `/api/posts/:id/like` | Unlike post | Yes |
-| POST | `/api/posts/:id/save` | Save post | Yes |
-| DELETE | `/api/posts/:id/save` | Unsave post | Yes |
-| POST | `/api/posts/:id/comments` | Add comment | Yes |
+| POST / DELETE | `/api/posts/:id/like` | Like / unlike | Yes |
+| POST / DELETE | `/api/posts/:id/save` | Save / unsave | Yes |
+| POST | `/api/posts/:id/comments` | Add comment (text and/or media) | Yes |
+| POST / DELETE | `/api/comments/:id/like` | Like / unlike comment | Yes |
 | DELETE | `/api/comments/:id` | Delete comment | Yes |
+
+### Stories, messages, activity & search
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| GET | `/api/stories` | Active stories grouped by user | Optional |
+| POST | `/api/stories` | Create story (`media`, `caption`) | Yes |
+| POST | `/api/stories/:id/view` | Mark story viewed | Yes |
+| DELETE | `/api/stories/:id` | Delete own story | Yes |
+| GET | `/api/messages/conversations` | Conversation list with unread counts | Yes |
+| GET | `/api/messages/unread` | Unread message count | Yes |
+| GET | `/api/messages/:username` | Thread with a user (marks read) | Yes |
+| POST | `/api/messages/:username` | Send message (`body`, optional `media`) | Yes |
+| DELETE | `/api/messages/:id` | Delete own message | Yes |
+| GET | `/api/notifications` | Activity list + unread count | Yes |
+| POST | `/api/notifications/read` | Mark all read | Yes |
+| POST | `/api/notifications/:id/read` | Mark one read | Yes |
+| GET | `/api/search?q=` | Unified search: users, posts, tags | Optional |
+| GET | `/api/tags/trending` | Trending hashtags | Optional |
 
 ## Notes
 
-- `data.db` is created in the project root when the server starts.
+- `data.db` and `public/uploads/` are created automatically.
+- Camera capture works over `localhost` (secure context). Browsers require permission; uploaded/captured media is saved to disk and served from `/uploads/`.
 - Set `JWT_SECRET` in a `.env` file for non-development use.
-- This is a learning/demo project and does not include production hardening (rate limiting, CSRF protection, input sanitization beyond basics, etc.).
+- This is a learning/demo project and does not include production hardening (rate limiting, CSRF protection, virus scanning of uploads, etc.).

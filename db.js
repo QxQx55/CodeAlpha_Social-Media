@@ -48,6 +48,8 @@ async function initDb() {
       password_hash TEXT NOT NULL,
       bio TEXT NOT NULL DEFAULT '',
       avatar_url TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -105,7 +107,11 @@ async function initDb() {
   `);
 
   await ensureColumn("users", "avatar_url", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("users", "phone", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("users", "last_seen", "DATETIME");
   await ensureColumn("posts", "image_url", "TEXT NOT NULL DEFAULT ''");
+  await run(`UPDATE users SET last_seen = COALESCE(last_seen, created_at, CURRENT_TIMESTAMP)`);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone) WHERE phone != ''`);
 }
 
 module.exports = { db, run, get, all, initDb };

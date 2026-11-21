@@ -28,11 +28,17 @@ function setAuthCookie(res, token) {
   });
 }
 
+async function touchLastSeen(userId) {
+  if (!userId) return;
+  try { await run("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?", [userId]); } catch {}
+}
+
 function authRequired(req, res, next) {
   const token = req.cookies[TOKEN_COOKIE];
   if (!token) return res.status(401).json({ error: "Authentication required" });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    touchLastSeen(req.user.id);
     next();
   } catch {
     return res.status(401).json({ error: "Invalid session" });
@@ -44,19 +50,23 @@ function optionalAuth(req, _res, next) {
   if (!token) return next();
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    touchLastSeen(req.user.id);
   } catch {
     req.user = null;
   }
   next();
 }
 
-function safeUser(row) {
+function safeUser(row, viewerId) {
   if (!row) return null;
+  const isMe = viewerId === row.id;
   return {
     id: row.id,
     username: row.username,
     bio: row.bio || "",
     avatar_url: row.avatar_url || "",
+    phone: isMe ? (row.phone || "") : undefined,
+    last_seen: row.last_seen || row.created_at,
     created_at: row.created_at,
   };
 }
@@ -65,9 +75,24 @@ function isHttpUrl(value) {
   return /^https?:\/\/.+/i.test(value);
 }
 
+function isValidPhone(value) {
+  return /^\+?[0-9]{8,15}$/.test(value);
+}
+
+function lastSeenLabel(iso) {
+  if (!iso) return "Offline";
+  const d = new Date(String(iso).replace(" ", "T") + "Z");
+  if (Number.isNaN(d.getTime())) return "Offline";
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 120) return "Active now";
+  if (diff < 3600) return `Active ${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `Active ${Math.floor(diff / 3600)}h ago`;
+  return `Active ${Math.floor(diff / 86400)}d ago`;
+}
+
 async function getProfile(username, viewerId) {
   const user = await get(
-    "SELECT id, username, bio, avatar_url, created_at FROM users WHERE username = ? COLLATE NOCASE",
+    "SELECT id, username, bio, avatar_url, phone, last_seen, created_at FROM users WHERE username = ? COLLATE NOCASE",
     [username]
   );
   if (!user) return null;
@@ -79,13 +104,15 @@ async function getProfile(username, viewerId) {
       ? get("SELECT 1 AS ok FROM follows WHERE follower_id = ? AND following_id = ?", [viewerId, user.id])
       : Promise.resolve(null),
   ]);
+  const base = safeUser(user, viewerId);
   return {
-    ...safeUser(user),
+    ...base,
     followers: followers.count,
     following: following.count,
     postsCount: postsCount.count,
     isFollowing: !!isFollowing,
     isMe: viewerId === user.id,
+    last_seen_text: lastSeenLabel(user.last_seen),
   };
 }
 
@@ -132,18 +159,30 @@ app.post("/api/auth/register", async (req, res) => {
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "");
     const bio = String(req.body.bio || "").trim().slice(0, 200);
+    const phone = String(req.body.phone || "").trim().replace(/[\s()-]/g, "");
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
       return res.status(400).json({ error: "Username must be 3-20 chars: letters, numbers, underscore" });
+    }
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ error: "Enter a valid phone number (8-15 digits, optional +)" });
     }
     if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
     const existing = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [username]);
     if (existing) return res.status(409).json({ error: "Username already taken" });
+    const existingPhone = await get("SELECT id FROM users WHERE phone = ?", [phone]);
+    if (existingPhone) return res.status(409).json({ error: "Phone number already registered" });
     const hash = await bcrypt.hash(password, 10);
-    const result = await run("INSERT INTO users (username, password_hash, bio) VALUES (?, ?, ?)", [username, hash, bio]);
+    const result = await run(
+      "INSERT INTO users (username, password_hash, bio, phone, last_seen) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+      [username, hash, bio, phone]
+    );
     const user = { id: result.id, username };
     setAuthCookie(res, signToken(user));
     res.status(201).json({ user: await getProfile(username, result.id) });
   } catch (err) {
+    if (String(err?.message || "").includes("UNIQUE") && String(err?.message || "").includes("phone")) {
+      return res.status(409).json({ error: "Phone number already registered" });
+    }
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
@@ -184,10 +223,10 @@ app.get("/api/users/search", optionalAuth, async (req, res) => {
     if (!q) return res.json({ users: [] });
     const like = `%${q.replace(/[%_]/g, "")}%`;
     const rows = await all(
-      `SELECT id, username, bio, avatar_url FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username ASC LIMIT 20`,
+      `SELECT id, username, bio, avatar_url, last_seen, created_at FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username ASC LIMIT 20`,
       [like]
     );
-    res.json({ users: rows.map(safeUser) });
+    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -198,25 +237,15 @@ app.get("/api/users/suggested", optionalAuth, async (req, res) => {
   try {
     const viewerId = req.user?.id || -1;
     const rows = await all(
-      `SELECT u.id, u.username, u.bio, u.avatar_url,
-              (SELECT COUNT(*) FROM followers f WHERE f.following_id = u.id) AS followers
+      `SELECT u.id, u.username, u.bio, u.avatar_url, u.last_seen, u.created_at
        FROM users u
        WHERE u.id != ?
          AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id)
        ORDER BY (SELECT COUNT(*) FROM follows f2 WHERE f2.following_id = u.id) DESC, u.created_at DESC
        LIMIT 5`,
       [viewerId, viewerId]
-    ).catch(async () => {
-      // fallback if alias issue; simple query
-      return all(
-        `SELECT u.id, u.username, u.bio, u.avatar_url
-         FROM users u
-         WHERE u.id != ?
-         ORDER BY u.created_at DESC LIMIT 5`,
-        [viewerId]
-      );
-    });
-    res.json({ users: rows.map((r) => ({ ...safeUser(r), followers: r.followers || 0 })) });
+    );
+    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -227,11 +256,18 @@ app.patch("/api/users/me", authRequired, async (req, res) => {
   try {
     const bio = String(req.body.bio ?? "").trim().slice(0, 200);
     const avatar_url = String(req.body.avatar_url ?? "").trim().slice(0, 500);
+    const phone = String(req.body.phone ?? "").trim().replace(/[\s()-]/g, "");
     if (avatar_url && !isHttpUrl(avatar_url)) return res.status(400).json({ error: "Avatar must be a valid http(s) URL" });
-    await run("UPDATE users SET bio = ?, avatar_url = ? WHERE id = ?", [bio, avatar_url, req.user.id]);
+    if (!isValidPhone(phone)) return res.status(400).json({ error: "Enter a valid phone number (8-15 digits, optional +)" });
+    const existingPhone = await get("SELECT id FROM users WHERE phone = ? AND id != ?", [phone, req.user.id]);
+    if (existingPhone) return res.status(409).json({ error: "Phone number already registered" });
+    await run("UPDATE users SET bio = ?, avatar_url = ?, phone = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?", [bio, avatar_url, phone, req.user.id]);
     const me = await get("SELECT username FROM users WHERE id = ?", [req.user.id]);
     res.json({ user: await getProfile(me.username, req.user.id) });
   } catch (err) {
+    if (String(err?.message || "").includes("UNIQUE") && String(err?.message || "").includes("phone")) {
+      return res.status(409).json({ error: "Phone number already registered" });
+    }
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
@@ -268,10 +304,10 @@ app.get("/api/users/:username/followers", optionalAuth, async (req, res) => {
     const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
     const rows = await all(
-      `SELECT u.id, u.username, u.bio, u.avatar_url FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=? ORDER BY f.created_at DESC`,
+      `SELECT u.id, u.username, u.bio, u.avatar_url, u.last_seen, u.created_at FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=? ORDER BY f.created_at DESC`,
       [user.id]
     );
-    res.json({ users: rows.map(safeUser) });
+    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -283,10 +319,10 @@ app.get("/api/users/:username/following", optionalAuth, async (req, res) => {
     const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
     const rows = await all(
-      `SELECT u.id, u.username, u.bio, u.avatar_url FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=? ORDER BY f.created_at DESC`,
+      `SELECT u.id, u.username, u.bio, u.avatar_url, u.last_seen, u.created_at FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=? ORDER BY f.created_at DESC`,
       [user.id]
     );
-    res.json({ users: rows.map(safeUser) });
+    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });

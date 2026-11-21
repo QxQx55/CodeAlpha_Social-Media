@@ -141,20 +141,7 @@ async function renderSuggestions() {
 
 async function renderStories() {
   const el = $("#stories-bar");
-  try {
-    const { users } = await api("/api/users/suggested");
-    const pool = state.user ? [state.user, ...users.filter(u => u.username !== state.user.username)] : users;
-    if (!pool.length) { el.classList.add("hidden"); return; }
-    el.classList.remove("hidden");
-    el.innerHTML = pool.slice(0, 10).map((u) => `
-      <button class="story" data-user="${esc(u.username)}">
-        <div class="story-ring ${state.user && u.username === state.user.username ? "seen" : ""}">
-          <div class="story-ring-inner">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="" onerror="this.style.display='none'">` : ""}${!u.avatar_url ? esc(u.username[0].toUpperCase()) : ""}</div>
-        </div>
-        <span class="story-name">${state.user && u.username === state.user.username ? "Your story" : esc(u.username)}</span>
-      </button>`).join("");
-    el.querySelectorAll(".story").forEach((s) => s.onclick = () => nav(`#/profile/${s.dataset.user}`));
-  } catch { el.classList.add("hidden"); }
+  if (el) el.classList.add("hidden");
 }
 
 function syncUI() {
@@ -324,12 +311,18 @@ async function loadExplore() {
     const { posts } = await api("/api/posts/explore");
     if (!posts.length) { grid.innerHTML = emptyState("", "No posts to explore", "Posts from the community will show up here."); return; }
     grid.innerHTML = posts.map((p) => `
-      <button class="explore-item" data-profile="${esc(p.author.username)}">
-        ${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="explore-text-only" style="display:none">${esc(p.content.slice(0, 80))}</div>`
-          : `<div class="explore-text-only">${esc(p.content.slice(0, 100) || "Post")}</div>`}
-        <div class="explore-overlay"><span><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg>${p.likes}</span><span><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>${p.comments.length}</span></div>
-      </button>`).join("");
-    grid.querySelectorAll(".explore-item").forEach((el) => el.onclick = () => nav(`#/profile/${el.dataset.profile}`));
+      <article class="explore-card card" data-profile="${esc(p.author.username)}">
+        ${p.image_url ? `<div class="explore-media"><img src="${esc(p.image_url)}" alt="" loading="lazy" onerror="this.parentElement.remove()"></div>` : ""}
+        <div class="explore-body">
+          <div class="explore-author">
+            <span class="avatar xs">${p.author.avatar_url ? `<img src="${esc(p.author.avatar_url)}" alt="">` : esc(p.author.username[0].toUpperCase())}</span>
+            <strong>${esc(p.author.username)}</strong>
+          </div>
+          <p class="explore-text">${esc(p.content || "Shared a post")}</p>
+          <div class="explore-meta muted"><span>♥ ${p.likes}</span><span>💬 ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
+        </div>
+      </article>`).join("");
+    grid.querySelectorAll(".explore-card").forEach((el) => el.onclick = () => nav(`#/profile/${el.dataset.profile}`));
   } catch (e) { grid.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
 }
 
@@ -379,6 +372,7 @@ async function loadProfile(username) {
               <button id="stat-followers"><strong>${u.followers}</strong> followers</button>
               <button id="stat-following"><strong>${u.following}</strong> following</button>
             </div>
+            <div class="profile-meta muted">${esc(u.last_seen_text || "Offline")}${u.isMe && u.phone ? ` · ${esc(u.phone)}` : ""}</div>
             <div class="profile-bio">${esc(u.bio || (u.isMe ? "Add a bio to tell people about yourself." : ""))}</div>
           </div>
         </div>
@@ -413,13 +407,14 @@ function openEditProfile(u) {
   modal.classList.remove("hidden");
   const form = $("#edit-profile-form");
   form.bio.value = u.bio || "";
+  form.phone.value = u.phone || "";
   form.avatar_url.value = u.avatar_url || "";
   form.onsubmit = async (e) => {
     e.preventDefault();
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
     try {
-      await api("/api/users/me", { method: "PATCH", body: JSON.stringify({ bio: form.bio.value, avatar_url: form.avatar_url.value }) });
+      await api("/api/users/me", { method: "PATCH", body: JSON.stringify({ bio: form.bio.value, phone: form.phone.value, avatar_url: form.avatar_url.value }) });
       modal.classList.add("hidden");
       toast("Profile updated");
       await loadMe(); refresh();
@@ -534,7 +529,7 @@ function bindAuth() {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username: fd.get("username"), password: fd.get("password"), bio: fd.get("bio") }) });
+      await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username: fd.get("username"), phone: fd.get("phone"), password: fd.get("password"), bio: fd.get("bio") }) });
       await loadMe(); toast("Account created!"); nav("#/");
     } catch (err) { toast(err.message, true); }
   };

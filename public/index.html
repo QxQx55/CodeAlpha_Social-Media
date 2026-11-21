@@ -63,7 +63,8 @@
               <button class="btn primary btn-block" type="submit">Log in</button>
             </form>
             <form id="register-form" class="stack auth-form hidden">
-              <label><span>Username</span><input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" autocomplete="username" placeholder="Choose a username"></label>
+              <label><span>Username</span><input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" autocomplete="username" placeholder="Choose a unique username"></label>
+              <label><span>Phone number</span><input name="phone" required inputmode="tel" pattern="^\+?[0-9]{8,15}$" placeholder="+1234567890"></label>
               <label><span>Password</span><input name="password" type="password" required minlength="6" autocomplete="new-password" placeholder="At least 6 characters"></label>
               <label><span>Bio</span><textarea name="bio" maxlength="200" rows="2" placeholder="A little about you (optional)"></textarea></label>
               <button class="btn primary btn-block" type="submit">Create account</button>
@@ -75,8 +76,6 @@
 
       <!-- FEED VIEW -->
       <section id="view-feed" class="view hidden">
-        <div class="stories-bar card" id="stories-bar"></div>
-
         <div class="card composer" id="composer-card">
           <div class="composer-top">
             <div class="avatar sm" id="composer-avatar">?</div>
@@ -153,6 +152,7 @@
       <div class="modal-head"><h3>Edit profile</h3><button class="icon-btn" data-close="modal">&times;</button></div>
       <form id="edit-profile-form" class="stack">
         <label><span>Bio</span><textarea name="bio" maxlength="200" rows="3" placeholder="Your bio"></textarea></label>
+        <label><span>Phone number</span><input name="phone" required inputmode="tel" pattern="^\+?[0-9]{8,15}$" placeholder="+1234567890"></label>
         <label><span>Avatar URL</span><input name="avatar_url" type="url" maxlength="500" placeholder="https://..."></label>
         <div class="modal-actions">
           <button type="button" class="btn ghost" data-close="modal">Cancel</button>

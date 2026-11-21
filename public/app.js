@@ -27,7 +27,10 @@ function toast(msg, err = false) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json", ...(opts.headers || {}) }, ...opts });
+  const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
+  const headers = { ...(opts.headers || {}) };
+  if (!isForm && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -164,6 +167,98 @@ async function loadMe() {
   syncUI();
 }
 
+function stopMediaStream(stream) {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+}
+
+function bindCommentForm(form, postId) {
+  const input = form.querySelector('input[name="comment"]');
+  const submit = form.querySelector(".comment-submit");
+  const fileInput = form.querySelector('input[name="image_file"]');
+  const camBtn = form.querySelector(".comment-cam-btn");
+  const tools = form.querySelector(".comment-tools");
+  const camBox = form.querySelector(".camera-box");
+  const video = camBox.querySelector("video");
+  const captureBtn = form.querySelector(".comment-capture");
+  const camClose = form.querySelector(".comment-cam-close");
+  const preview = form.querySelector(".comment-preview");
+  let file = null;
+  let stream = null;
+
+  const syncTools = () => {
+    if (file || !camBox.classList.contains("hidden")) tools.classList.remove("hidden");
+    else tools.classList.add("hidden");
+  };
+  const update = () => { submit.disabled = !(input.value.trim() || file); };
+  const setPreview = (f) => {
+    if (preview._url) URL.revokeObjectURL(preview._url);
+    file = f;
+    if (!f) {
+      preview._url = null;
+      preview.classList.add("hidden");
+      preview.innerHTML = "";
+      syncTools();
+      update();
+      return;
+    }
+    const url = URL.createObjectURL(f);
+    preview._url = url;
+    preview.classList.remove("hidden");
+    preview.innerHTML = `<img src="${url}" alt="Preview"><button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
+    preview.querySelector(".remove-media").onclick = () => { fileInput.value = ""; setPreview(null); };
+    syncTools();
+    update();
+  };
+
+  input.addEventListener("input", update);
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files?.[0];
+    if (f) setPreview(f);
+  });
+
+  camBtn.onclick = async () => {
+    try {
+      stopMediaStream(stream);
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      video.srcObject = stream;
+      camBox.classList.remove("hidden");
+      syncTools();
+    } catch { toast("Camera unavailable. You can upload an image file instead.", true); }
+  };
+  camClose.onclick = () => { stopMediaStream(stream); stream = null; video.srcObject = null; camBox.classList.add("hidden"); syncTools(); };
+  captureBtn.onclick = () => {
+    if (!video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      setPreview(new File([blob], `comment-camera-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      camClose.onclick();
+    }, "image/jpeg", 0.92);
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const content = input.value.trim();
+    if (!content && !file) return;
+    submit.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append("content", content);
+      if (file) fd.append("image", file);
+      await api(`/api/posts/${postId}/comments`, { method: "POST", body: fd });
+      input.value = "";
+      fileInput.value = "";
+      stopMediaStream(stream); stream = null; video.srcObject = null;
+      camBox.classList.add("hidden");
+      setPreview(null);
+      refresh();
+    } catch (err) { toast(err.message, true); update(); }
+  };
+}
+
 function renderPost(post, opts = {}) {
   const tpl = $("#post-template").content.cloneNode(true);
   const art = tpl.querySelector(".post");
@@ -224,7 +319,7 @@ function renderPost(post, opts = {}) {
       const row = document.createElement("div");
       row.className = "comment";
       const canDel = state.user && (state.user.id === c.user_id || state.user.id === post.author.id);
-      row.innerHTML = `<div class="comment-body"><strong data-u="${esc(c.username)}">${esc(c.username)}</strong><span>${esc(c.content)}</span></div>${canDel ? `<button class="comment-del" data-cid="${c.id}" title="Delete">&times;</button>` : ""}`;
+      row.innerHTML = `<div class="comment-body"><strong data-u="${esc(c.username)}">${esc(c.username)}</strong>${c.content ? `<span class="comment-text">${esc(c.content)}</span>` : ""}${c.image_url ? `<img class="comment-image" src="${esc(c.image_url)}" alt="Comment image" loading="lazy">` : ""}</div>${canDel ? `<button class="comment-del" data-cid="${c.id}" title="Delete">&times;</button>` : ""}`;
       row.querySelector("strong").onclick = () => nav(`#/profile/${encodeURIComponent(c.username)}`);
       const del = row.querySelector(".comment-del");
       if (del) del.onclick = async () => { try { await api(`/api/comments/${c.id}`, { method: "DELETE" }); refresh(); } catch (e) { toast(e.message, true); } };
@@ -241,21 +336,11 @@ function renderPost(post, opts = {}) {
   renderComments(post.comments, limit);
 
   const form = tpl.querySelector(".comment-form");
-  const input = form.querySelector("input");
-  const submit = form.querySelector(".comment-submit");
   if (!state.user) {
     form.innerHTML = `<button type="button" class="muted" style="font-size:14px;background:none;border:none;padding:0;cursor:pointer" id="login-to-comment-${post.id}">Log in to comment</button>`;
     setTimeout(() => { const b = document.getElementById(`login-to-comment-${post.id}`); if (b) b.onclick = () => nav("#/login"); }, 0);
   } else {
-    input.addEventListener("input", () => { submit.disabled = !input.value.trim(); });
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const content = input.value.trim();
-      if (!content) return;
-      submit.disabled = true;
-      try { await api(`/api/posts/${post.id}/comments`, { method: "POST", body: JSON.stringify({ content }) }); input.value = ""; refresh(); }
-      catch (err) { toast(err.message, true); submit.disabled = false; }
-    };
+    bindCommentForm(form, post.id);
   }
 
   return art;
@@ -479,26 +564,91 @@ function bindComposer() {
   const cancel = $("#cancel-post");
   const content = $("#post-content");
   const imgInput = $("#post-image");
+  const fileInput = $("#post-image-file");
   const preview = $("#post-image-preview");
+  const camBtn = $("#post-camera-btn");
+  const camBox = $("#post-camera");
+  const video = $("#post-camera-video");
+  const captureBtn = $("#post-camera-capture");
+  const camStop = $("#post-camera-stop");
+  let file = null;
+  let stream = null;
+
+  const clearPreviewUrl = () => { if (preview._url) { URL.revokeObjectURL(preview._url); preview._url = null; } };
+  const showPreview = (src, isBlob = false) => {
+    clearPreviewUrl();
+    preview.classList.remove("hidden");
+    preview.innerHTML = `<img src="${esc(src)}" alt="Preview"><button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
+    if (isBlob) preview._url = src;
+    preview.querySelector(".remove-media").onclick = () => { file = null; fileInput.value = ""; imgInput.value = ""; clearPreviewUrl(); preview.classList.add("hidden"); preview.innerHTML = ""; };
+  };
+  const stopCamera = () => { stopMediaStream(stream); stream = null; video.srcObject = null; camBox.classList.add("hidden"); };
+  const resetComposer = () => {
+    form.reset();
+    file = null;
+    clearPreviewUrl();
+    preview.classList.add("hidden");
+    preview.innerHTML = "";
+    $("#post-count").textContent = "0/700";
+    stopCamera();
+  };
 
   trigger.onclick = () => { if (!state.user) return nav("#/login"); form.classList.remove("hidden"); trigger.classList.add("hidden"); content.focus(); };
-  cancel.onclick = () => { form.classList.add("hidden"); trigger.classList.remove("hidden"); form.reset(); preview.classList.add("hidden"); preview.innerHTML = ""; $("#post-count").textContent = "0/700"; };
+  cancel.onclick = () => { form.classList.add("hidden"); trigger.classList.remove("hidden"); resetComposer(); };
   content.addEventListener("input", () => { $("#post-count").textContent = `${content.value.length}/700`; });
+
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    file = f;
+    imgInput.value = "";
+    showPreview(URL.createObjectURL(f), true);
+  });
   imgInput.addEventListener("input", () => {
     const url = imgInput.value.trim();
-    if (/^https?:\/\/.+/i.test(url)) { preview.classList.remove("hidden"); preview.innerHTML = `<img src="${esc(url)}" alt="Preview" onerror="this.parentElement.classList.add('hidden')">`; }
-    else { preview.classList.add("hidden"); preview.innerHTML = ""; }
+    file = null; fileInput.value = "";
+    if (/^https?:\/\/.+/i.test(url)) showPreview(url);
+    else { clearPreviewUrl(); preview.classList.add("hidden"); preview.innerHTML = ""; }
   });
+
+  camBtn.onclick = async () => {
+    try {
+      stopCamera();
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      video.srcObject = stream;
+      camBox.classList.remove("hidden");
+    } catch { toast("Camera unavailable. You can upload an image file instead.", true); }
+  };
+  camStop.onclick = stopCamera;
+  captureBtn.onclick = () => {
+    if (!video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+      imgInput.value = ""; fileInput.value = "";
+      showPreview(URL.createObjectURL(file), true);
+      stopCamera();
+    }, "image/jpeg", 0.92);
+  };
+
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (!state.user) return nav("#/login");
     const text = content.value.trim();
     const image_url = imgInput.value.trim();
-    if (!text && !image_url) return toast("Add text or an image URL", true);
+    if (!text && !image_url && !file) return toast("Add text or an image", true);
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
     try {
-      await api("/api/posts", { method: "POST", body: JSON.stringify({ content: text, image_url }) });
+      const fd = new FormData();
+      fd.append("content", text);
+      if (file) fd.append("image", file);
+      else if (image_url) fd.append("image_url", image_url);
+      await api("/api/posts", { method: "POST", body: fd });
       cancel.onclick();
       toast("Post shared");
       refresh();

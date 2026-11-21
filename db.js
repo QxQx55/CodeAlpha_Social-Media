@@ -69,6 +69,7 @@ async function initDb() {
       post_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
       content TEXT NOT NULL,
+      image_url TEXT NOT NULL DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -110,6 +111,7 @@ async function initDb() {
   await ensureColumn("users", "phone", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("users", "last_seen", "DATETIME");
   await ensureColumn("posts", "image_url", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("comments", "image_url", "TEXT NOT NULL DEFAULT ''");
   await run(`UPDATE users SET last_seen = COALESCE(last_seen, created_at, CURRENT_TIMESTAMP)`);
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone) WHERE phone != ''`);
 }

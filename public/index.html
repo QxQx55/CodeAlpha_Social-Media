@@ -100,7 +100,18 @@
           </div>
           <form id="post-form" class="composer-form hidden">
             <textarea id="post-content" maxlength="700" rows="3" placeholder="Write a caption..."></textarea>
-            <input id="post-image" type="url" placeholder="Image URL (optional, https://...)" maxlength="500">
+            <div class="media-controls">
+              <label class="btn ghost small file-btn">Upload photo<input id="post-image-file" type="file" accept="image/*" hidden></label>
+              <button type="button" class="btn ghost small" id="post-camera-btn">Use camera</button>
+              <input id="post-image" type="url" placeholder="Or paste image URL (https://...)" maxlength="500">
+            </div>
+            <div id="post-camera" class="camera-box hidden">
+              <video id="post-camera-video" autoplay playsinline muted></video>
+              <div class="camera-actions">
+                <button type="button" class="btn small primary" id="post-camera-capture">Capture</button>
+                <button type="button" class="btn small ghost" id="post-camera-stop">Close camera</button>
+              </div>
+            </div>
             <div id="post-image-preview" class="img-preview hidden"></div>
             <div class="composer-actions">
               <span class="muted" id="post-count">0/700</span>
@@ -205,8 +216,22 @@
           <div class="comments"></div>
         </div>
         <form class="comment-form">
-          <input name="comment" maxlength="300" placeholder="Add a comment..." autocomplete="off">
-          <button type="submit" class="comment-submit" disabled>Post</button>
+          <div class="comment-main-row">
+            <input name="comment" maxlength="300" placeholder="Add a comment..." autocomplete="off">
+            <label class="icon-btn comment-file-btn" title="Upload image"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg><input name="image_file" type="file" accept="image/*" hidden></label>
+            <button type="button" class="icon-btn comment-cam-btn" title="Camera"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+            <button type="submit" class="comment-submit" disabled>Post</button>
+          </div>
+          <div class="comment-tools hidden">
+            <div class="camera-box hidden">
+              <video autoplay playsinline muted></video>
+              <div class="camera-actions">
+                <button type="button" class="btn small primary comment-capture">Capture</button>
+                <button type="button" class="btn small ghost comment-cam-close">Close camera</button>
+              </div>
+            </div>
+            <div class="comment-preview hidden"></div>
+          </div>
         </form>
       </div>
     </article>

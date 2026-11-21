@@ -1,9 +1,11 @@
 require("dotenv").config();
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const multer = require("multer");
 const { initDb, run, get, all } = require("./db");
 
 const app = express();
@@ -14,6 +16,43 @@ const TOKEN_COOKIE = "token";
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
+
+const uploadsDir = path.join(__dirname, "public", "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = (path.extname(file.originalname || "").toLowerCase().match(/\.(jpe?g|png|gif|webp)$/) || [""])[0] || ".jpg";
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 6 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^image\/(jpeg|png|gif|webp)$/i.test(file.mimetype)) return cb(null, true);
+    cb(new Error("Only image files (jpg, png, gif, webp) are allowed"));
+  },
+});
+
+function uploadSingle(field) {
+  return (req, res, next) => {
+    upload.single(field)(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      next();
+    });
+  };
+}
+
+function normalizeImageUrl(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  if (v.startsWith("/uploads/")) return v;
+  if (isHttpUrl(v)) return v.slice(0, 500);
+  return null;
+}
 
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: "7d" });
@@ -128,7 +167,7 @@ async function getPostWithMeta(postId, viewerId) {
     viewerId ? get("SELECT 1 AS ok FROM likes WHERE user_id = ? AND post_id = ?", [viewerId, postId]) : null,
     viewerId ? get("SELECT 1 AS ok FROM saved_posts WHERE user_id = ? AND post_id = ?", [viewerId, postId]) : null,
     all(
-      `SELECT c.id, c.content, c.created_at, u.id AS user_id, u.username, u.avatar_url
+      `SELECT c.id, c.content, c.image_url, c.created_at, u.id AS user_id, u.username, u.avatar_url
        FROM comments c JOIN users u ON u.id = c.user_id
        WHERE c.post_id = ? ORDER BY c.created_at ASC`,
       [postId]
@@ -143,7 +182,7 @@ async function getPostWithMeta(postId, viewerId) {
     likes: likes.count,
     liked: !!liked,
     saved: !!saved,
-    comments,
+    comments: comments.map((c) => ({ ...c, image_url: c.image_url || "" })),
   };
 }
 
@@ -354,6 +393,12 @@ app.delete("/api/users/:username/follow", authRequired, async (req, res) => {
   }
 });
 
+// Uploads
+app.post("/api/uploads", authRequired, uploadSingle("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Image file is required" });
+  res.status(201).json({ url: `/uploads/${req.file.filename}` });
+});
+
 // Posts
 app.get("/api/posts", optionalAuth, async (req, res) => {
   try {
@@ -404,13 +449,15 @@ app.get("/api/posts/saved", authRequired, async (req, res) => {
   }
 });
 
-app.post("/api/posts", authRequired, async (req, res) => {
+app.post("/api/posts", authRequired, uploadSingle("image"), async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
-    const image_url = String(req.body.image_url || "").trim().slice(0, 500);
-    if (!content && !image_url) return res.status(400).json({ error: "Post must have text or an image URL" });
+    const uploaded = req.file ? `/uploads/${req.file.filename}` : "";
+    const rawImage = uploaded || String(req.body.image_url || "").trim();
+    const image_url = normalizeImageUrl(rawImage);
+    if (image_url === null) return res.status(400).json({ error: "Image must be a valid URL or uploaded file" });
+    if (!content && !image_url) return res.status(400).json({ error: "Post must have text or an image" });
     if (content.length > 700) return res.status(400).json({ error: "Post must be 700 characters or less" });
-    if (image_url && !isHttpUrl(image_url)) return res.status(400).json({ error: "Image must be a valid http(s) URL" });
     const result = await run("INSERT INTO posts (user_id, content, image_url) VALUES (?, ?, ?)", [req.user.id, content, image_url]);
     res.status(201).json({ post: await getPostWithMeta(result.id, req.user.id) });
   } catch (err) {
@@ -480,14 +527,18 @@ app.delete("/api/posts/:id/save", authRequired, async (req, res) => {
   }
 });
 
-app.post("/api/posts/:id/comments", authRequired, async (req, res) => {
+app.post("/api/posts/:id/comments", authRequired, uploadSingle("image"), async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
-    if (!content) return res.status(400).json({ error: "Comment content is required" });
+    const uploaded = req.file ? `/uploads/${req.file.filename}` : "";
+    const rawImage = uploaded || String(req.body.image_url || "").trim();
+    const image_url = normalizeImageUrl(rawImage);
+    if (image_url === null) return res.status(400).json({ error: "Image must be a valid URL or uploaded file" });
+    if (!content && !image_url) return res.status(400).json({ error: "Comment must have text or an image" });
     if (content.length > 300) return res.status(400).json({ error: "Comment must be 300 characters or less" });
     const post = await get("SELECT id FROM posts WHERE id = ?", [req.params.id]);
     if (!post) return res.status(404).json({ error: "Post not found" });
-    await run("INSERT INTO comments (post_id, user_id, content) VALUES (?, ?, ?)", [post.id, req.user.id, content]);
+    await run("INSERT INTO comments (post_id, user_id, content, image_url) VALUES (?, ?, ?, ?)", [post.id, req.user.id, content, image_url]);
     res.status(201).json({ post: await getPostWithMeta(post.id, req.user.id) });
   } catch (err) {
     console.error(err);

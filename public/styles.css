@@ -132,10 +132,16 @@ img { display: block; max-width: 100%; }
 .composer-form textarea { border: none; background: transparent; padding: 4px 0; font-size: 15px; resize: none; min-height: 72px; }
 .composer-form textarea:focus { border: none; }
 .composer-form input[type="url"] { font-size: 13px; }
+.media-controls { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: center; }
+.file-btn { cursor: pointer; }
+.camera-box { border: 1px solid var(--line-light); border-radius: 10px; padding: 10px; background: #f8f8f6; display: grid; gap: 8px; }
+.camera-box video { width: 100%; max-height: 280px; border-radius: 8px; background: #111; object-fit: cover; }
+.camera-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .composer-actions { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--line-light); }
 .composer-btns { display: flex; gap: 8px; }
-.img-preview { border-radius: 8px; overflow: hidden; max-height: 320px; background: #000; }
+.img-preview { border-radius: 8px; overflow: hidden; max-height: 320px; background: #000; position: relative; }
 .img-preview img { width: 100%; max-height: 320px; object-fit: contain; }
+.img-preview .remove-media { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 999px; width: 28px; height: 28px; cursor: pointer; }
 
 /* â”€â”€ Feed tabs â”€â”€ */
 .feed-tabs { display: flex; gap: 0; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
@@ -174,15 +180,24 @@ img { display: block; max-width: 100%; }
 .comment-body { flex: 1; min-width: 0; word-wrap: break-word; }
 .comment-body strong { font-weight: 600; margin-right: 4px; cursor: pointer; }
 .comment-body strong:hover { text-decoration: underline; }
+.comment-text { white-space: pre-wrap; }
+.comment-image { margin-top: 6px; max-width: 220px; max-height: 220px; width: 100%; border-radius: 10px; object-fit: cover; border: 1px solid var(--line-light); }
 .comment-del { color: var(--muted-light); font-size: 16px; line-height: 1; padding: 0 4px; opacity: 0; transition: opacity var(--transition); flex-shrink: 0; }
 .comment:hover .comment-del { opacity: 1; }
 .comment-del:hover { color: var(--like); }
-.comment-form { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line-light); margin-top: 8px; padding-top: 12px; }
-.comment-form input { flex: 1; border: none; background: transparent; padding: 0; font-size: 14px; }
-.comment-form input:focus { border: none; }
+.comment-form { display: grid; gap: 8px; border-top: 1px solid var(--line-light); margin-top: 8px; padding-top: 12px; }
+.comment-main-row { display: flex; align-items: center; gap: 8px; }
+.comment-main-row input[name="comment"] { flex: 1; border: none; background: transparent; padding: 0; font-size: 14px; }
+.comment-main-row input[name="comment"]:focus { border: none; }
+.comment-file-btn, .comment-cam-btn { padding: 4px; margin: 0; color: var(--muted); }
+.comment-file-btn:hover, .comment-cam-btn:hover { color: var(--text); }
 .comment-submit { color: var(--accent); font-weight: 600; font-size: 14px; padding: 0; opacity: 1; transition: opacity var(--transition); }
 .comment-submit:disabled { opacity: .35; pointer-events: none; }
 .comment-submit:hover:not(:disabled) { color: var(--accent-hover); }
+.comment-tools { display: grid; gap: 8px; }
+.comment-preview { position: relative; width: fit-content; }
+.comment-preview img { max-width: 180px; max-height: 180px; border-radius: 10px; border: 1px solid var(--line-light); object-fit: cover; }
+.comment-preview .remove-media { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 12px; border: none; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; }
 
 /* â”€â”€ Explore grid â”€â”€ */
 .page-head { margin-bottom: 20px; }

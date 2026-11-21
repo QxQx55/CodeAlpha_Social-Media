@@ -1,105 +1,297 @@
-# Wave — Instagram-style Social Media Platform
+# Wave
 
-A mini social media app built for **CodeAlpha Task 2**, expanded with an Instagram-like feature set. Everything is real and persisted in SQLite — posts, media, stories, reels, likes, comments, follows, DMs and notifications are stored in the database, not mocked in the browser.
+<div align="center">
 
-## Features
+[![Node.js](https://img.shields.io/badge/Node.js-22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)](https://expressjs.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](./Dockerfile)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](./package.json)
 
-- **Accounts & profiles**: register/login, full name, bio, website, phone, avatar (URL or upload), public/private accounts, follow requests
-- **Real media posts**: create posts with an uploaded image/video, camera capture, or a pasted media URL; hashtags and `@mentions`
-- **Stories**: photo/video stories from camera or upload, 24-hour expiry, view counts, seen state, delete your own
-- **Reels**: video/image reels with playback, likes and comments
-- **Feed**: For you / Following, double-tap to like, likes, comments (text + media), comment likes, saves, share link
-- **Explore**: popular posts, trending hashtags, hashtag filtering
-- **Direct messages**: conversation list, unread counts, text and media attachments, seen status
-- **Activity / notifications**: likes, comments, comment likes, follows, follow requests, mentions and messages
-- **Real search**: unified search across people, post captions/hashtags and tags, with instant dropdown and results page
-- **Persistence**: SQLite stores users, posts, stories, reels, media metadata, comments, likes, follows, DMs, notifications, hashtags and more
+**A production-shaped, Instagram-style social platform built with Express, SQLite and vanilla JavaScript.**
 
-## Tech Stack
+</div>
 
-- **Frontend**: HTML, CSS, JavaScript (vanilla)
-- **Backend**: Node.js, Express.js
-- **Database**: SQLite (`sqlite3`)
-- **Auth**: JWT in HTTP-only cookie + bcrypt password hashing
-- **Uploads**: multer (images + video, camera Blob uploads)
+---
 
-## Project Structure
+## Table of contents
 
-```text
-.
-├── db.js               # SQLite connection, schema and migrations
-├── server.js           # Express API, uploads and static file serving
-├── public/
-│   ├── index.html      # App layout and views
-│   ├── styles.css      # Instagram-style styling
-│   ├── app.js          # Frontend logic and API calls
-│   └── uploads/        # User-uploaded photos/videos (created automatically)
-├── package.json
-└── data.db             # Created automatically on first run
+- [Overview](#overview)
+- [Feature highlights](#feature-highlights)
+- [Architecture](#architecture)
+- [Tech stack](#tech-stack)
+- [Data model](#data-model)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Docker deployment](#docker-deployment)
+- [Feature walkthrough](#feature-walkthrough)
+- [API reference](#api-reference)
+- [Example requests](#example-requests)
+- [Engineering decisions](#engineering-decisions)
+- [Security considerations](#security-considerations)
+- [Quality checks](#quality-checks)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Overview
+
+Wave is a full-stack social media application created for **CodeAlpha Task 2**. It goes beyond a static demo: posts, comments, likes, follows, stories, reels, direct messages, notifications and search are all real, database-backed operations.
+
+The frontend is intentionally framework-free. It talks to a versioned REST-style API (`/api/*`) using `fetch`, an HTTP-only JWT cookie for authentication, and `FormData` for media uploads. The backend persists everything in SQLite and serves uploaded media from `/uploads`.
+
+| Property | Value |
+| --- | --- |
+| Type | Full-stack web application |
+| Domain | Social media / content sharing |
+| Backend | Node.js, Express 5, SQLite |
+| Frontend | HTML, CSS, vanilla JavaScript |
+| Auth | JWT in HTTP-only cookie, bcrypt hashing |
+| Media | Local disk storage via multer (images + video) |
+| Default port | `3000` (configurable) |
+
+---
+
+## Feature highlights
+
+- **Real content pipeline** — create posts with an uploaded image/video, camera capture, camera recording, or a remote URL. Hashtags and `@mentions` are parsed and persisted.
+- **Stories** — 24-hour expiration, view counts, seen state, keyboard navigation, and owner deletion.
+- **Reels** — short-form media with their own feed, likes and comments.
+- **Direct messages** — conversation list, unread counters, text/media attachments and "seen" state.
+- **Activity feed** — notifications for likes, comments, comment likes, follows, follow requests, mentions and messages.
+- **Real unified search** — search people, post captions, hashtags and tags through a single endpoint, with an instant dropdown and a full results view.
+- **Privacy controls** — public/private accounts with a follow-request approval workflow.
+- **Engagement primitives** — likes, comment likes, saves, follows, share links and double-tap-to-like.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser["Browser<br/>HTML / CSS / vanilla JS"]
+    Router["Hash router<br/>app.js"]
+    API["Express API<br/>server.js"]
+    Auth["Auth middleware<br/>JWT cookie + bcrypt"]
+    Upload["Multer<br/>image / video"]
+    DB[("SQLite<br/>data.db")]
+    Files[("Disk storage<br/>public/uploads")]
+
+    Browser --> Router --> API
+    API --> Auth
+    API --> Upload --> Files
+    API --> DB
+    API --> Files
 ```
 
-## Setup
+### Request lifecycle
 
-1. Install dependencies:
+1. The browser sends `fetch` requests to `/api/*`.
+2. `cookie-parser` reads the JWT from the HTTP-only `token` cookie.
+3. `optionalAuth` or `authRequired` attaches `req.user` and refreshes `last_seen`.
+4. Route handlers validate input, perform SQLite operations and emit notifications where relevant.
+5. Media endpoints stream files through multer into `public/uploads/` and return a URL such as `/uploads/1690000000-abc123.jpg`.
+6. The frontend re-fetches the active route and re-renders the affected view.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the server (default port 3000):
+## Tech stack
 
-   ```bash
-   npm start
-   ```
+| Layer | Technology | Why |
+| --- | --- | --- |
+| Runtime | Node.js 22 | Modern `fetch`, stable native modules |
+| HTTP | Express 5 | Minimal, predictable routing and middleware |
+| Database | SQLite (`sqlite3`) | Zero-config persistence, ideal for a demo/learning project |
+| Auth | `jsonwebtoken`, `bcryptjs` | Stateless sessions with hashed passwords |
+| Uploads | `multer` | Multipart handling with MIME filtering and size limits |
+| Config | `dotenv` | Environment-driven secrets and ports |
+| Frontend | Vanilla JS + CSS | No build step, easy to inspect and deploy |
+| Containers | Docker + Compose | Reproducible runtime with persistent volumes |
 
-   To run on another port (e.g. 5000):
+---
 
-   ```bash
-   # Windows PowerShell
-   $env:PORT=5000
-   npm start
-   ```
+## Data model
 
-3. Open [http://localhost:3000](http://localhost:3000) (or your chosen port).
+| Table | Purpose |
+| --- | --- |
+| `users` | Credentials, profile fields, avatar, phone, privacy flag, last seen |
+| `posts` | Posts and reels (`kind`, `media_type`, caption, media URL) |
+| `comments` | Post comments with optional media |
+| `likes` | Post likes (composite primary key) |
+| `comment_likes` | Comment likes |
+| `saved_posts` | Bookmarks |
+| `follows` | Follow graph |
+| `follow_requests` | Pending requests for private accounts |
+| `stories` | Ephemeral media with creation timestamp |
+| `story_views` | Viewer/story relation for view counts and seen state |
+| `hashtags` / `post_hashtags` | Normalized tags and post associations |
+| `messages` | Direct messages with optional media and `read_at` |
+| `notifications` | Activity events with actor, type and related entities |
 
-For development with auto-restart on Node 18+:
+Schema creation and additive migrations live in [`db.js`](./db.js). Columns introduced after the initial release are added through `ensureColumn`, so an existing `data.db` is upgraded automatically on startup.
+
+---
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 18+ (Node 22 recommended)
+- npm
+- A modern browser with camera permission for localhost features
+
+### Local setup
+
+```bash
+git clone https://github.com/QxQx55/CodeAlpha_Social-Media.git
+cd CodeAlpha_Social-Media
+
+npm install
+npm start
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+For auto-restart during development:
 
 ```bash
 npm run dev
 ```
 
-## Docker
+To run on a different port:
 
-Build and run locally (port 5000, persistent data + uploads):
+```powershell
+# Windows PowerShell
+$env:PORT = 5000
+npm start
+```
+
+```bash
+# macOS / Linux
+PORT=5000 npm start
+```
+
+### Demo accounts
+
+These accounts were created while exercising the API and remain in the repository's local `data.db` (excluded from Git):
+
+| Username | Password |
+| --- | --- |
+| `demo_author_7415` | `DemoPass123` |
+| `demo_comment_7415` | `DemoPass123` |
+
+---
+
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port |
+| `JWT_SECRET` | `dev-secret-change-me` | Token signing secret — **set this outside development** |
+| `DB_PATH` | `./data.db` | SQLite file location; useful for container volumes |
+| `NODE_ENV` | — | Set to `production` in deployments |
+
+Create a `.env` file at the project root for local overrides:
+
+```dotenv
+PORT=3000
+JWT_SECRET=replace-with-a-long-random-value
+DB_PATH=./data.db
+```
+
+---
+
+## Docker deployment
+
+Build and start with Compose:
 
 ```bash
 docker compose up -d --build
 ```
 
-Then open [http://localhost:5000](http://localhost:5000).
+The Compose file publishes port **5000**, sets `JWT_SECRET`, and mounts two named volumes:
 
-Or build/run the image directly:
+- `wave-data` → `/app/data` (SQLite database)
+- `wave-uploads` → `/app/public/uploads` (media files)
+
+Open [http://localhost:5000](http://localhost:5000).
+
+Build and run the image directly:
 
 ```bash
 docker build -t wave-social .
-docker run -d -p 5000:5000 \
+
+docker run -d \
+  --name wave-social \
+  -p 5000:5000 \
   -e PORT=5000 \
-  -e JWT_SECRET=change-me \
+  -e JWT_SECRET=replace-with-a-long-random-value \
   -v wave-data:/app/data \
   -v wave-uploads:/app/public/uploads \
   wave-social
 ```
 
-SQLite data lives in `/app/data/data.db` and uploaded media in `/app/public/uploads`; both are declared as volumes so they survive container restarts.
+The image uses a multi-stage build, installs only production dependencies, runs as the unprivileged `node` user, and includes a healthcheck against `/`.
 
-## API Overview
+---
+
+## Feature walkthrough
+
+### Authentication
+
+- Registration validates username format, phone number and password length.
+- Passwords are hashed with bcrypt (cost 10).
+- A signed JWT is stored in an `HttpOnly`, `SameSite=Lax` cookie with a 7-day lifetime.
+- `authRequired` protects writes; `optionalAuth` enriches public reads with viewer-specific state such as `liked` and `isFollowing`.
+
+### Posts, reels and media
+
+- `POST /api/posts` accepts `multipart/form-data` with `media`, `content` and `kind` (`post` or `reel`).
+- Allowed MIME types: JPEG, PNG, GIF, WebP, MP4, WebM and MOV; maximum size is 30 MB.
+- `media_type` is derived from the MIME type so the frontend can render `<img>` or `<video>` correctly.
+- Captions are capped at 2200 characters; comments at 1000.
+- Hashtags (`#nature`) and mentions (`@username`) are extracted, normalized and stored.
+
+### Stories
+
+- Stories are created through the same Create modal with `kind = story`.
+- `GET /api/stories` returns groups whose `created_at` is within the last 24 hours.
+- Viewing a story inserts into `story_views`, which powers view counts and the seen/unseen ring state.
+
+### Direct messages
+
+- Conversations are derived from distinct counterparties in `messages`.
+- Opening a thread marks the other user's messages as read.
+- Sending a message accepts text and optional media and creates a notification for the recipient.
+
+### Activity and privacy
+
+- Notifications store an actor, type and optional post/comment references, then render human-readable text server-side.
+- Private accounts convert a follow into a `follow_requests` row; the owner can accept or decline it from their profile.
+
+### Search
+
+`GET /api/search?q=` performs three real SQL searches in parallel:
+
+1. Users by username, full name or bio
+2. Posts by caption or associated hashtag
+3. Hashtags by prefix/containment, ordered by usage
+
+The same endpoint powers the header dropdown and the full search page.
+
+---
+
+## API reference
 
 ### Auth & users
+
 | Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/api/auth/register` | Register (username, phone, password, full_name, bio) | No |
-| POST | `/api/auth/login` | Login | No |
-| POST | `/api/auth/logout` | Logout | Yes |
+| --- | --- | --- | --- |
+| POST | `/api/auth/register` | Register an account | No |
+| POST | `/api/auth/login` | Log in | No |
+| POST | `/api/auth/logout` | Clear the session cookie | Yes |
 | GET | `/api/auth/me` | Current user profile | Optional |
 | GET | `/api/users/search?q=` | Search people | Optional |
 | GET | `/api/users/suggested` | Suggested people | Optional |
@@ -108,51 +300,164 @@ SQLite data lives in `/app/data/data.db` and uploaded media in `/app/public/uplo
 | GET | `/api/users/:username/reels` | Reels by user | Optional |
 | GET | `/api/users/:username/followers` | Followers list | Optional |
 | GET | `/api/users/:username/following` | Following list | Optional |
-| PATCH | `/api/users/me` | Update profile (supports avatar upload + private flag) | Yes |
-| POST | `/api/users/:username/follow` | Follow / request to follow | Yes |
-| DELETE | `/api/users/:username/follow` | Unfollow / cancel request | Yes |
+| PATCH | `/api/users/me` | Update profile / avatar / privacy | Yes |
+| POST | `/api/users/:username/follow` | Follow or request to follow | Yes |
+| DELETE | `/api/users/:username/follow` | Unfollow or cancel request | Yes |
 | GET | `/api/users/me/follow-requests` | Pending follow requests | Yes |
 | POST | `/api/users/me/follow-requests/:username/accept` | Accept request | Yes |
 | DELETE | `/api/users/me/follow-requests/:username` | Decline request | Yes |
 
-### Media & posts
+### Media, posts and engagement
+
 | Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/api/uploads` | Upload a single image | Yes |
+| --- | --- | --- | --- |
+| POST | `/api/uploads` | Upload one image | Yes |
 | GET | `/api/posts?feed=all\|following` | Latest posts | Optional |
 | GET | `/api/posts/:id` | Single post | Optional |
-| GET | `/api/posts/explore?tag=` | Popular posts, optional hashtag filter | Optional |
+| GET | `/api/posts/explore?tag=` | Popular posts, optional tag filter | Optional |
 | GET | `/api/posts/saved` | Saved posts | Yes |
 | GET | `/api/reels` | Reels feed | Optional |
-| POST | `/api/posts` | Create post/reel (multipart `media` or `image_url`, `kind`, `content`) | Yes |
+| POST | `/api/posts` | Create post or reel | Yes |
 | DELETE | `/api/posts/:id` | Delete own post | Yes |
 | POST / DELETE | `/api/posts/:id/like` | Like / unlike | Yes |
 | POST / DELETE | `/api/posts/:id/save` | Save / unsave | Yes |
-| POST | `/api/posts/:id/comments` | Add comment (text and/or media) | Yes |
+| POST | `/api/posts/:id/comments` | Add text/media comment | Yes |
 | POST / DELETE | `/api/comments/:id/like` | Like / unlike comment | Yes |
 | DELETE | `/api/comments/:id` | Delete comment | Yes |
 
-### Stories, messages, activity & search
+### Stories, messages, activity and discovery
+
 | Method | Endpoint | Description | Auth |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | GET | `/api/stories` | Active stories grouped by user | Optional |
-| POST | `/api/stories` | Create story (`media`, `caption`) | Yes |
+| POST | `/api/stories` | Create story | Yes |
 | POST | `/api/stories/:id/view` | Mark story viewed | Yes |
 | DELETE | `/api/stories/:id` | Delete own story | Yes |
-| GET | `/api/messages/conversations` | Conversation list with unread counts | Yes |
+| GET | `/api/messages/conversations` | Conversation list | Yes |
 | GET | `/api/messages/unread` | Unread message count | Yes |
 | GET | `/api/messages/:username` | Thread with a user (marks read) | Yes |
-| POST | `/api/messages/:username` | Send message (`body`, optional `media`) | Yes |
+| POST | `/api/messages/:username` | Send message | Yes |
 | DELETE | `/api/messages/:id` | Delete own message | Yes |
-| GET | `/api/notifications` | Activity list + unread count | Yes |
-| POST | `/api/notifications/read` | Mark all read | Yes |
-| POST | `/api/notifications/:id/read` | Mark one read | Yes |
-| GET | `/api/search?q=` | Unified search: users, posts, tags | Optional |
+| GET | `/api/notifications` | Activity + unread count | Yes |
+| POST | `/api/notifications/read` | Mark all as read | Yes |
+| POST | `/api/notifications/:id/read` | Mark one as read | Yes |
+| GET | `/api/search?q=` | Unified search | Optional |
 | GET | `/api/tags/trending` | Trending hashtags | Optional |
 
-## Notes
+---
 
-- `data.db` and `public/uploads/` are created automatically.
-- Camera capture works over `localhost` (secure context). Browsers require permission; uploaded/captured media is saved to disk and served from `/uploads/`.
-- Set `JWT_SECRET` in a `.env` file for non-development use.
-- This is a learning/demo project and does not include production hardening (rate limiting, CSRF protection, virus scanning of uploads, etc.).
+## Example requests
+
+Log in and keep the cookie jar:
+
+```bash
+curl -c cookies.txt -X POST http://localhost:3000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo_author_7415","password":"DemoPass123"}'
+```
+
+Create a post with an uploaded image and hashtags:
+
+```bash
+curl -b cookies.txt -X POST http://localhost:3000/api/posts \
+  -F 'content=Shipping a new feature #buildinpublic' \
+  -F 'kind=post' \
+  -F 'media=@./photo.jpg'
+```
+
+Search across users, posts and tags:
+
+```bash
+curl 'http://localhost:3000/api/search?q=nature'
+```
+
+Send a direct message:
+
+```bash
+curl -b cookies.txt -X POST \
+  http://localhost:3000/api/messages/demo_comment_7415 \
+  -F 'body=Hey, nice post!'
+```
+
+---
+
+## Engineering decisions
+
+- **SQLite over a remote database** — the project is a self-contained task/demo; SQLite removes infrastructure setup while still exercising real SQL, foreign keys, indexes and composite keys.
+- **Hash-based client routing** — avoids server rewrite rules for a static frontend and keeps deployment simple.
+- **Additive migrations at boot** — `CREATE TABLE IF NOT EXISTS` plus `ensureColumn` allows existing databases to upgrade without a migration tool.
+- **Multer disk storage** — keeps the media pipeline observable and avoids base64 blobs in SQLite. Uploads are served directly by Express static middleware.
+- **Server-derived metadata** — `media_type`, tags, notifications and read state are computed on the server so clients cannot forge them.
+- **Single search endpoint** — one query param drives three indexes/searches, keeping frontend state predictable.
+
+---
+
+## Security considerations
+
+This is a learning/demo project. The following are intentionally out of scope but should be added before production use:
+
+- Rate limiting on auth, messaging and upload endpoints
+- CSRF protection for cookie-authenticated mutations
+- Antivirus/content scanning and image transcoding for uploads
+- Object storage (e.g. S3) instead of local disk
+- Email/phone verification and password reset
+- Per-user privacy enforcement beyond the follow-request workflow
+- A strong, externally injected `JWT_SECRET`
+
+---
+
+## Quality checks
+
+```bash
+# Syntax validation
+node --check server.js
+node --check db.js
+node --check public/app.js
+
+# Start with a clean database (optional)
+$env:DB_PATH = './tmp-test.db'   # PowerShell
+npm start
+```
+
+Verified manually during development:
+
+- Login and profile hydration
+- Post/comment creation with JSON and multipart media
+- Story creation, listing and view tracking
+- Reel creation and feed retrieval
+- DM send, conversation listing and unread counts
+- Notification generation and read state
+- Unified search by user, caption and hashtag
+- Private account → follow request → accept/decline
+- Comment likes and hashtag parsing
+- `DB_PATH` override used by the Docker volume
+
+---
+
+## Roadmap
+
+- [ ] Automated integration tests (Node test runner + Supertest)
+- [ ] Pagination / cursor-based feeds
+- [ ] Push notifications
+- [ ] Media compression and thumbnails
+- [ ] Search relevance scoring
+- [ ] Story highlights
+- [ ] Rich reaction picker
+- [ ] Admin/moderation tools
+
+---
+
+## Contributing
+
+1. Fork the repository.
+2. Create a feature branch: `git checkout -b feat/your-feature`.
+3. Keep changes focused and follow the existing module boundaries.
+4. Run the syntax checks above.
+5. Commit with a conventional message, e.g. `feat: add story highlights`.
+6. Push and open a pull request.
+
+---
+
+## License
+
+Distributed under the **ISC** license. See [`package.json`](./package.json) for details.

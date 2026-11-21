@@ -123,20 +123,23 @@ async function renderSuggestions() {
           <span class="s-name" data-user="${esc(u.username)}">${esc(u.username)}</span>
           <span class="s-sub">${esc(u.bio || "Suggested for you")}</span>
         </div>
-        ${state.user && state.user.username !== u.username ? `<button class="btn-text" data-follow="${esc(u.username)}">Follow</button>` : ""}
+        ${state.user && !u.isMe ? `<button class="btn-text" data-follow="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}">${u.isFollowing ? "Following" : "Follow"}</button>` : ""}
       </div>`).join("");
     el.querySelectorAll("[data-user]").forEach((n) => n.onclick = () => nav(`#/profile/${n.dataset.user}`));
     el.querySelectorAll("[data-follow]").forEach((btn) => {
       btn.onclick = async () => {
         if (!state.user) return nav("#/login");
+        const username = btn.dataset.follow;
+        const following = btn.dataset.following === "1";
         btn.disabled = true;
         try {
-          await api(`/api/users/${encodeURIComponent(btn.dataset.follow)}/follow`, { method: "POST" });
-          btn.textContent = "Following";
-          btn.disabled = true;
-          btn.style.color = "var(--muted)";
-          await loadMe();
-        } catch (e) { toast(e.message, true); btn.disabled = false; }
+          const next = await toggleFollow(username, following);
+          if (next === null) return;
+          btn.dataset.following = next ? "1" : "0";
+          btn.textContent = next ? "Following" : "Follow";
+          if (state.route.name === "profile") refresh();
+        } catch (e) { toast(e.message, true); }
+        finally { btn.disabled = false; }
       };
     });
   } catch { el.innerHTML = ""; }
@@ -404,7 +407,7 @@ async function loadExplore() {
             <strong>${esc(p.author.username)}</strong>
           </div>
           <p class="explore-text">${esc(p.content || "Shared a post")}</p>
-          <div class="explore-meta muted"><span>â™¥ ${p.likes}</span><span>ðŸ’¬ ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
+          <div class="explore-meta muted"><span>♥ ${p.likes}</span><span>💬 ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
         </div>
       </article>`).join("");
     grid.querySelectorAll(".explore-card").forEach((el) => el.onclick = () => nav(`#/profile/${el.dataset.profile}`));
@@ -457,7 +460,7 @@ async function loadProfile(username) {
               <button id="stat-followers"><strong>${u.followers}</strong> followers</button>
               <button id="stat-following"><strong>${u.following}</strong> following</button>
             </div>
-            <div class="profile-meta muted">${esc(u.last_seen_text || "Offline")}${u.isMe && u.phone ? ` Â· ${esc(u.phone)}` : ""}</div>
+            <div class="profile-meta muted">${esc(u.last_seen_text || "Offline")}${u.isMe && u.phone ? ` · ${esc(u.phone)}` : ""}</div>
             <div class="profile-bio">${esc(u.bio || (u.isMe ? "Add a bio to tell people about yourself." : ""))}</div>
           </div>
         </div>
@@ -468,9 +471,15 @@ async function loadProfile(username) {
     if (followBtn) followBtn.onclick = async () => {
       followBtn.disabled = true;
       try {
-        await api(`/api/users/${encodeURIComponent(u.username)}/follow`, { method: u.isFollowing ? "DELETE" : "POST" });
-        await loadMe(); refresh();
-      } catch (e) { toast(e.message, true); followBtn.disabled = false; }
+        const next = await toggleFollow(u.username, u.isFollowing);
+        if (next === null) return;
+        u.isFollowing = next;
+        followBtn.textContent = next ? "Following" : "Follow";
+        followBtn.classList.toggle("ghost", next);
+        followBtn.classList.toggle("primary", !next);
+        refresh();
+      } catch (e) { toast(e.message, true); }
+      finally { followBtn.disabled = false; }
     };
     $("#stat-followers").onclick = () => showUserList(u.username, "followers");
     $("#stat-following").onclick = () => showUserList(u.username, "following");
@@ -685,6 +694,14 @@ function bindAuth() {
   };
 }
 
+async function toggleFollow(username, currentlyFollowing) {
+  if (!state.user) { nav("#/login"); return null; }
+  await api(`/api/users/${encodeURIComponent(username)}/follow`, { method: currentlyFollowing ? "DELETE" : "POST" });
+  await loadMe();
+  renderSuggestions();
+  return !currentlyFollowing;
+}
+
 function bindSearch() {
   const input = $("#global-search");
   const box = $("#search-results");
@@ -699,15 +716,32 @@ function bindSearch() {
         if (!users.length) { box.innerHTML = `<div class="search-item"><span class="muted">No users found</span></div>`; }
         else {
           box.innerHTML = users.map((u) => `
-            <button class="search-item" data-u="${esc(u.username)}">
-              <div class="avatar xs">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="">` : esc(u.username[0].toUpperCase())}</div>
-              <div class="s-info"><span class="s-name">${esc(u.username)}</span><span class="s-bio">${esc(u.bio || "")}</span></div>
-            </button>`).join("");
-          box.querySelectorAll("[data-u]").forEach((b) => b.onclick = () => { input.value = ""; box.classList.add("hidden"); nav(`#/profile/${b.dataset.u}`); });
+            <div class="search-item">
+              <button class="search-user" data-u="${esc(u.username)}">
+                <div class="avatar xs">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="">` : esc(u.username[0].toUpperCase())}</div>
+                <div class="s-info"><span class="s-name">${esc(u.username)}</span><span class="s-bio">${esc(u.bio || u.last_seen_text || "")}</span></div>
+              </button>
+              ${state.user && !u.isMe ? `<button class="btn-text search-follow" data-u="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}">${u.isFollowing ? "Following" : "Follow"}</button>` : ""}
+            </div>`).join("");
+          box.querySelectorAll(".search-user").forEach((b) => b.onclick = () => { input.value = ""; box.classList.add("hidden"); nav(`#/profile/${b.dataset.u}`); });
+          box.querySelectorAll(".search-follow").forEach((btn) => btn.onclick = async (e) => {
+            e.stopPropagation();
+            const username = btn.dataset.u;
+            const following = btn.dataset.following === "1";
+            btn.disabled = true;
+            try {
+              const next = await toggleFollow(username, following);
+              if (next === null) return;
+              btn.dataset.following = next ? "1" : "0";
+              btn.textContent = next ? "Following" : "Follow";
+              if (state.route.name === "profile") refresh();
+            } catch (err) { toast(err.message, true); }
+            finally { btn.disabled = false; }
+          });
         }
         box.classList.remove("hidden");
       } catch { box.classList.add("hidden"); }
-    }, 250);
+    }, 200);
   });
   document.addEventListener("click", (e) => { if (!e.target.closest(".search-wrap")) box.classList.add("hidden"); });
 }

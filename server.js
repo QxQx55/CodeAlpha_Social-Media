@@ -107,7 +107,22 @@ function safeUser(row, viewerId) {
     phone: isMe ? (row.phone || "") : undefined,
     last_seen: row.last_seen || row.created_at,
     created_at: row.created_at,
+    isMe,
+    isFollowing: false,
+    last_seen_text: lastSeenLabel(row.last_seen || row.created_at),
   };
+}
+
+async function usersWithFollowState(rows, viewerId) {
+  if (!rows.length) return [];
+  if (!viewerId) return rows.map((r) => safeUser(r, viewerId));
+  const placeholders = rows.map(() => "?").join(",");
+  const followed = await all(
+    `SELECT following_id FROM follows WHERE follower_id = ? AND following_id IN (${placeholders})`,
+    [viewerId, ...rows.map((r) => r.id)]
+  );
+  const followingIds = new Set(followed.map((r) => r.following_id));
+  return rows.map((r) => ({ ...safeUser(r, viewerId), isFollowing: followingIds.has(r.id) }));
 }
 
 function isHttpUrl(value) {
@@ -260,12 +275,12 @@ app.get("/api/users/search", optionalAuth, async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (!q) return res.json({ users: [] });
-    const like = `%${q.replace(/[%_]/g, "")}%`;
+    const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     const rows = await all(
-      `SELECT id, username, bio, avatar_url, last_seen, created_at FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username ASC LIMIT 20`,
+      `SELECT id, username, bio, avatar_url, last_seen, created_at FROM users WHERE username COLLATE NOCASE LIKE ? ESCAPE '\\' ORDER BY username ASC LIMIT 20`,
       [like]
     );
-    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
+    res.json({ users: await usersWithFollowState(rows, req.user?.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -284,7 +299,7 @@ app.get("/api/users/suggested", optionalAuth, async (req, res) => {
        LIMIT 5`,
       [viewerId, viewerId]
     );
-    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
+    res.json({ users: await usersWithFollowState(rows, req.user?.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -346,7 +361,7 @@ app.get("/api/users/:username/followers", optionalAuth, async (req, res) => {
       `SELECT u.id, u.username, u.bio, u.avatar_url, u.last_seen, u.created_at FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=? ORDER BY f.created_at DESC`,
       [user.id]
     );
-    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
+    res.json({ users: await usersWithFollowState(rows, req.user?.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -361,7 +376,7 @@ app.get("/api/users/:username/following", optionalAuth, async (req, res) => {
       `SELECT u.id, u.username, u.bio, u.avatar_url, u.last_seen, u.created_at FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=? ORDER BY f.created_at DESC`,
       [user.id]
     );
-    res.json({ users: rows.map((r) => safeUser(r, req.user?.id)) });
+    res.json({ users: await usersWithFollowState(rows, req.user?.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });

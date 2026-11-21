@@ -5,9 +5,10 @@ A mini social media app built for **CodeAlpha Task 2**. It includes user profile
 ## Features
 
 - **User profiles**: Register, login, bio, profile stats, and per-user post feed
-- **Posts & comments**: Create posts and comment on any post
-- **Like/follow system**: Like/unlike posts and follow/unfollow users
-- **Persistent database**: SQLite stores users, posts, comments, likes, and follows
+- **Posts & comments**: Create posts and comment on any post, with photo uploads or camera capture
+- **Like/follow system**: Like/unlike posts, save posts, and follow/unfollow users
+- **Search & discovery**: Find people, see suggestions, and browse popular posts
+- **Persistent database**: SQLite stores users, posts, comments, likes, follows, and saved posts
 
 ## Tech Stack
 
@@ -62,15 +63,27 @@ npm run dev
 | POST | `/api/auth/login` | Login | No |
 | POST | `/api/auth/logout` | Logout | Yes |
 | GET | `/api/auth/me` | Current user profile | Optional |
+| GET | `/api/users/search?q=` | Search people | Optional |
+| GET | `/api/users/suggested` | Get suggested people | Optional |
 | GET | `/api/users/:username` | Get user profile | Optional |
 | GET | `/api/users/:username/posts` | Get posts by user | Optional |
+| GET | `/api/users/:username/followers` | List followers | Optional |
+| GET | `/api/users/:username/following` | List followed users | Optional |
+| PATCH | `/api/users/me` | Update own profile | Yes |
 | POST | `/api/users/:username/follow` | Follow user | Yes |
 | DELETE | `/api/users/:username/follow` | Unfollow user | Yes |
+| POST | `/api/uploads` | Upload an image (jpg, png, gif, webp) | Yes |
 | GET | `/api/posts` | Get latest posts | Optional |
+| GET | `/api/posts/explore` | Get popular posts | Optional |
+| GET | `/api/posts/saved` | Get saved posts | Yes |
 | POST | `/api/posts` | Create post | Yes |
+| DELETE | `/api/posts/:id` | Delete own post | Yes |
 | POST | `/api/posts/:id/like` | Like post | Yes |
 | DELETE | `/api/posts/:id/like` | Unlike post | Yes |
+| POST | `/api/posts/:id/save` | Save post | Yes |
+| DELETE | `/api/posts/:id/save` | Unsave post | Yes |
 | POST | `/api/posts/:id/comments` | Add comment | Yes |
+| DELETE | `/api/comments/:id` | Delete comment | Yes |
 
 ## Notes
 

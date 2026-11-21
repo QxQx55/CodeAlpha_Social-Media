@@ -32,9 +32,10 @@ img { display: block; max-width: 100%; }
 /* â”€â”€ Topbar â”€â”€ */
 .topbar { position: sticky; top: 0; z-index: 100; background: var(--surface); border-bottom: 1px solid var(--line); }
 .topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; height: 60px; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 22px; letter-spacing: -0.5px; flex-shrink: 0; }
-.brand-icon { display: flex; }
-.brand-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 24px; letter-spacing: -0.6px; flex-shrink: 0; }
+.brand-icon { display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 8px 18px rgba(47, 111, 98, 0.22)); transition: transform .25s ease; }
+.brand:hover .brand-icon { transform: translateY(-1px) rotate(-3deg); }
+.brand-text { color: #24463f; letter-spacing: -0.5px; }
 .search-wrap { position: relative; width: 268px; flex-shrink: 1; }
 .search-wrap input { background: #efefef; border: none; border-radius: 8px; padding: 10px 16px 10px 40px; font-size: 14px; width: 100%; }
 .search-wrap input:focus { background: #fff; border: 1px solid var(--line); padding: 9px 15px 9px 39px; }

@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   user: null,
   route: { name: "feed", param: null },
   feedMode: "all",
@@ -93,7 +93,7 @@ function renderNavAvatar() {
 function renderSideUser() {
   const el = $("#side-user");
   if (!state.user) {
-    el.innerHTML = `<div class="side-user-row"><div class="side-user-info"><span class="name">Welcome to Pulse</span><span class="sub">Sign in to share and connect</span></div></div><div style="margin-top:12px"><a class="btn primary btn-block small" href="#/login">Log in</a></div>`;
+    el.innerHTML = `<div class="side-user-row"><div class="side-user-info"><span class="name">Welcome to Wave</span><span class="sub">Sign in to share and connect</span></div></div><div style="margin-top:12px"><a class="btn primary btn-block small" href="#/login">Log in</a></div>`;
     return;
   }
   const u = state.user;
@@ -319,7 +319,7 @@ async function loadExplore() {
             <strong>${esc(p.author.username)}</strong>
           </div>
           <p class="explore-text">${esc(p.content || "Shared a post")}</p>
-          <div class="explore-meta muted"><span>♥ ${p.likes}</span><span>💬 ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
+          <div class="explore-meta muted"><span>â™¥ ${p.likes}</span><span>ðŸ’¬ ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
         </div>
       </article>`).join("");
     grid.querySelectorAll(".explore-card").forEach((el) => el.onclick = () => nav(`#/profile/${el.dataset.profile}`));
@@ -372,7 +372,7 @@ async function loadProfile(username) {
               <button id="stat-followers"><strong>${u.followers}</strong> followers</button>
               <button id="stat-following"><strong>${u.following}</strong> following</button>
             </div>
-            <div class="profile-meta muted">${esc(u.last_seen_text || "Offline")}${u.isMe && u.phone ? ` · ${esc(u.phone)}` : ""}</div>
+            <div class="profile-meta muted">${esc(u.last_seen_text || "Offline")}${u.isMe && u.phone ? ` Â· ${esc(u.phone)}` : ""}</div>
             <div class="profile-bio">${esc(u.bio || (u.isMe ? "Add a bio to tell people about yourself." : ""))}</div>
           </div>
         </div>
@@ -584,3 +584,4 @@ function bindUI() {
   await loadMe();
   await route();
 })();
+

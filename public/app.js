@@ -278,8 +278,10 @@ function bindEvents() {
     tab.onclick = () => {
       $$(".tab").forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
-      $("#login-form").classList.toggle("hidden", tab.dataset.authTab !== "login");
-      $("#register-form").classList.toggle("hidden", tab.dataset.authTab !== "register");
+      const showLogin = tab.dataset.authTab === "login";
+      $("#login-form").classList.toggle("hidden", !showLogin);
+      $("#register-form").classList.toggle("hidden", showLogin);
+      [$("#login-form"), $("#register-form")].forEach(f => { f.style.animation = 'none'; f.offsetHeight; f.style.animation = ''; });
     };
   });
 

@@ -7,11 +7,11 @@ services:
       - "5000:5000"
     environment:
       PORT: 5000
-      DB_PATH: /app/data/data.db
+      DB_PATH: /app/database/data.db
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     volumes:
-      - wave-data:/app/data
-      - wave-uploads:/app/public/uploads
+      - wave-data:/app/database
+      - wave-uploads:/app/frontend/uploads
 
 volumes:
   wave-data:

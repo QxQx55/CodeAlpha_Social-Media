@@ -4,9 +4,9 @@ npm-debug.log*
 .gitignore
 .env
 .env.*
-data.db
+database/data.db
 *.db
-public/uploads
+frontend/uploads
 Dockerfile
 .dockerignore
 docker-compose.yml

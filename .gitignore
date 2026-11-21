@@ -1,6 +1,7 @@
 ﻿node_modules/
-data.db
+database/data.db
 .env
 .DS_Store
 npm-debug.log*
-public/uploads/
+frontend/uploads/*
+!frontend/uploads/.gitkeep

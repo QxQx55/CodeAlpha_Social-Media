@@ -18,6 +18,7 @@
 
 - [Overview](#overview)
 - [Feature highlights](#feature-highlights)
+- [Project structure](#project-structure)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Data model](#data-model)
@@ -67,17 +68,48 @@ The frontend is intentionally framework-free. It talks to a versioned REST-style
 
 ---
 
+## Project structure
+
+The repository is separated by responsibility so each layer can be understood and worked on independently:
+
+```text
+CodeAlpha_Social-Media/
+├── backend/                 # Node.js application
+│   ├── server.js            # Express API, auth, uploads, routes
+│   ├── db.js                # SQLite connection, schema and migrations
+│   ├── package.json         # Backend dependencies and npm scripts
+│   └── package-lock.json
+├── frontend/                # Static assets served by Express
+│   ├── index.html           # App shell, views and templates
+│   ├── app.js               # Hash router, state and API calls
+│   ├── styles.css           # Instagram-style design system
+│   └── uploads/             # User media (runtime, gitignored)
+│       └── .gitkeep
+├── database/                # Persistent data
+│   ├── data.db              # SQLite database (runtime, gitignored)
+│   └── .gitkeep
+├── Dockerfile               # Multi-stage production image
+├── docker-compose.yml       # Port 5000 + persistent volumes
+├── .dockerignore
+├── .gitignore
+└── README.md
+```
+
+> `data.db` and `frontend/uploads/` are generated at runtime and excluded from version control. The `.gitkeep` files keep their parent directories present in the repository.
+
+---
+
 ## Architecture
 
 ```mermaid
 flowchart LR
     Browser["Browser<br/>HTML / CSS / vanilla JS"]
     Router["Hash router<br/>app.js"]
-    API["Express API<br/>server.js"]
+    API["Express API<br/>backend/server.js"]
     Auth["Auth middleware<br/>JWT cookie + bcrypt"]
     Upload["Multer<br/>image / video"]
-    DB[("SQLite<br/>data.db")]
-    Files[("Disk storage<br/>public/uploads")]
+    DB[("SQLite<br/>database/data.db")]
+    Files[("Disk storage<br/>frontend/uploads")]
 
     Browser --> Router --> API
     API --> Auth
@@ -92,7 +124,7 @@ flowchart LR
 2. `cookie-parser` reads the JWT from the HTTP-only `token` cookie.
 3. `optionalAuth` or `authRequired` attaches `req.user` and refreshes `last_seen`.
 4. Route handlers validate input, perform SQLite operations and emit notifications where relevant.
-5. Media endpoints stream files through multer into `public/uploads/` and return a URL such as `/uploads/1690000000-abc123.jpg`.
+5. Media endpoints stream files through multer into `frontend/uploads/` and return a URL such as `/uploads/1690000000-abc123.jpg`.
 6. The frontend re-fetches the active route and re-renders the affected view.
 
 ---
@@ -130,7 +162,7 @@ flowchart LR
 | `messages` | Direct messages with optional media and `read_at` |
 | `notifications` | Activity events with actor, type and related entities |
 
-Schema creation and additive migrations live in [`db.js`](./db.js). Columns introduced after the initial release are added through `ensureColumn`, so an existing `data.db` is upgraded automatically on startup.
+Schema creation and additive migrations live in [`backend/db.js`](./backend/db.js). Columns introduced after the initial release are added through `ensureColumn`, so an existing `database/data.db` is upgraded automatically on startup.
 
 ---
 
@@ -144,15 +176,17 @@ Schema creation and additive migrations live in [`db.js`](./db.js). Columns intr
 
 ### Local setup
 
+The Node application lives in `backend/`, so install dependencies and start it from there:
+
 ```bash
 git clone https://github.com/QxQx55/CodeAlpha_Social-Media.git
-cd CodeAlpha_Social-Media
+cd CodeAlpha_Social-Media/backend
 
 npm install
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The server reads `../frontend` for static assets and writes to `../database/data.db` automatically.
 
 For auto-restart during development:
 
@@ -163,19 +197,19 @@ npm run dev
 To run on a different port:
 
 ```powershell
-# Windows PowerShell
+# Windows PowerShell (from backend/)
 $env:PORT = 5000
 npm start
 ```
 
 ```bash
-# macOS / Linux
+# macOS / Linux (from backend/)
 PORT=5000 npm start
 ```
 
 ### Demo accounts
 
-These accounts were created while exercising the API and remain in the repository's local `data.db` (excluded from Git):
+These accounts were created while exercising the API and remain in the repository's local `database/data.db` (excluded from Git):
 
 | Username | Password |
 | --- | --- |
@@ -190,15 +224,15 @@ These accounts were created while exercising the API and remain in the repositor
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port |
 | `JWT_SECRET` | `dev-secret-change-me` | Token signing secret — **set this outside development** |
-| `DB_PATH` | `./data.db` | SQLite file location; useful for container volumes |
+| `DB_PATH` | `../database/data.db` (relative to `backend/`) | SQLite file location; useful for container volumes |
 | `NODE_ENV` | — | Set to `production` in deployments |
 
-Create a `.env` file at the project root for local overrides:
+Create a `.env` file in `backend/` for local overrides:
 
 ```dotenv
 PORT=3000
 JWT_SECRET=replace-with-a-long-random-value
-DB_PATH=./data.db
+DB_PATH=../database/data.db
 ```
 
 ---
@@ -211,10 +245,10 @@ Build and start with Compose:
 docker compose up -d --build
 ```
 
-The Compose file publishes port **5000**, sets `JWT_SECRET`, and mounts two named volumes:
+The Compose file publishes port **5000**, sets `JWT_SECRET`, and mounts two named volumes that mirror the repository layout:
 
-- `wave-data` → `/app/data` (SQLite database)
-- `wave-uploads` → `/app/public/uploads` (media files)
+- `wave-data` → `/app/database` (SQLite database)
+- `wave-uploads` → `/app/frontend/uploads` (media files)
 
 Open [http://localhost:5000](http://localhost:5000).
 
@@ -228,12 +262,12 @@ docker run -d \
   -p 5000:5000 \
   -e PORT=5000 \
   -e JWT_SECRET=replace-with-a-long-random-value \
-  -v wave-data:/app/data \
-  -v wave-uploads:/app/public/uploads \
+  -v wave-data:/app/database \
+  -v wave-uploads:/app/frontend/uploads \
   wave-social
 ```
 
-The image uses a multi-stage build, installs only production dependencies, runs as the unprivileged `node` user, and includes a healthcheck against `/`.
+The image uses a multi-stage build, installs only production dependencies from `backend/package.json`, runs as the unprivileged `node` user with `/app/backend` as its working directory, and includes a healthcheck against `/`.
 
 ---
 
@@ -409,13 +443,13 @@ This is a learning/demo project. The following are intentionally out of scope bu
 ## Quality checks
 
 ```bash
-# Syntax validation
-node --check server.js
-node --check db.js
-node --check public/app.js
+# From the repository root
+node --check backend/server.js
+node --check backend/db.js
+node --check frontend/app.js
 
-# Start with a clean database (optional)
-$env:DB_PATH = './tmp-test.db'   # PowerShell
+# Start with a clean database (optional, from backend/)
+$env:DB_PATH = '../tmp-test.db'   # PowerShell
 npm start
 ```
 
@@ -460,4 +494,4 @@ Verified manually during development:
 
 ## License
 
-Distributed under the **ISC** license. See [`package.json`](./package.json) for details.
+Distributed under the **ISC** license. See [`backend/package.json`](./backend/package.json) for details.

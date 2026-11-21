@@ -4,14 +4,15 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000 \
-    DB_PATH=/app/data/data.db
+    DB_PATH=/app/database/data.db
 
 # Install dependencies (build tools are needed if sqlite3 has no prebuilt binary).
 FROM base AS deps
+WORKDIR /app/backend
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json ./
+COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev \
  && npm cache clean --force
 
@@ -21,17 +22,17 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
-COPY db.js server.js ./
-COPY public ./public
+COPY --from=deps /app/backend/node_modules ./backend/node_modules
+COPY backend ./backend
+COPY frontend ./frontend
 
-RUN mkdir -p /app/data /app/public/uploads \
+RUN mkdir -p /app/database /app/frontend/uploads \
  && chown -R node:node /app
 
 USER node
+WORKDIR /app/backend
 
-VOLUME ["/app/data", "/app/public/uploads"]
+VOLUME ["/app/database", "/app/frontend/uploads"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

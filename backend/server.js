@@ -15,9 +15,11 @@ const TOKEN_COOKIE = "token";
 
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, "public")));
+const FRONTEND_DIR = path.join(__dirname, "..", "frontend");
 
-const uploadsDir = path.join(__dirname, "public", "uploads");
+app.use(express.static(FRONTEND_DIR));
+
+const uploadsDir = path.join(FRONTEND_DIR, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
 
 const EXT_BY_MIME = {
@@ -980,7 +982,7 @@ app.get("/api/tags/trending", optionalAuth, async (_req, res) => {
 });
 
 app.get(/.*/, (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(FRONTEND_DIR, "index.html"));
 });
 
 initDb()

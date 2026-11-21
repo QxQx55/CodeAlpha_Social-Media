@@ -68,6 +68,30 @@ For development with auto-restart on Node 18+:
 npm run dev
 ```
 
+## Docker
+
+Build and run locally (port 5000, persistent data + uploads):
+
+```bash
+docker compose up -d --build
+```
+
+Then open [http://localhost:5000](http://localhost:5000).
+
+Or build/run the image directly:
+
+```bash
+docker build -t wave-social .
+docker run -d -p 5000:5000 \
+  -e PORT=5000 \
+  -e JWT_SECRET=change-me \
+  -v wave-data:/app/data \
+  -v wave-uploads:/app/public/uploads \
+  wave-social
+```
+
+SQLite data lives in `/app/data/data.db` and uploaded media in `/app/public/uploads`; both are declared as volumes so they survive container restarts.
+
 ## API Overview
 
 ### Auth & users

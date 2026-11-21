@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulse - Mini Social Media</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#/" aria-label="Pulse home">
+        <span class="brand-mark">P</span>
+        <span>Pulse</span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#/" data-nav="feed">Feed</a>
+        <a href="#/profile/me" data-nav="profile" id="nav-profile" class="hidden">My Profile</a>
+      </nav>
+      <div class="auth-actions" id="auth-actions"></div>
+    </div>
+  </header>
+
+  <main class="container app-shell">
+    <aside class="sidebar">
+      <section class="card sidebar-card" id="sidebar-user"></section>
+      <section class="card sidebar-card info-card">
+        <h3>What you can do</h3>
+        <ul>
+          <li>Create a profile and share posts</li>
+          <li>Like and comment on posts</li>
+          <li>Follow people and view their profiles</li>
+        </ul>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div id="message" class="message hidden" role="status"></div>
+
+      <section id="view-auth" class="view hidden">
+        <div class="card auth-card">
+          <div class="auth-tabs">
+            <button class="tab active" data-auth-tab="login">Login</button>
+            <button class="tab" data-auth-tab="register">Register</button>
+          </div>
+          <form id="login-form" class="stack">
+            <label>Username <input name="username" required autocomplete="username"></label>
+            <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+            <button class="btn primary" type="submit">Login</button>
+          </form>
+          <form id="register-form" class="stack hidden">
+            <label>Username <input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" autocomplete="username"></label>
+            <label>Password <input name="password" type="password" required minlength="6" autocomplete="new-password"></label>
+            <label>Bio <textarea name="bio" maxlength="200" rows="3" placeholder="Tell people about yourself"></textarea></label>
+            <button class="btn primary" type="submit">Create account</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-feed" class="view hidden">
+        <div class="card composer" id="composer-card">
+          <h2>Share something</h2>
+          <form id="post-form" class="stack">
+            <textarea id="post-content" maxlength="500" rows="3" placeholder="What's on your mind?" required></textarea>
+            <div class="composer-row">
+              <span class="muted" id="post-count">0/500</span>
+              <button class="btn primary" type="submit">Post</button>
+            </div>
+          </form>
+        </div>
+        <div class="section-head">
+          <h2>Latest posts</h2>
+          <button class="btn ghost small" id="refresh-feed">Refresh</button>
+        </div>
+        <div id="feed-list" class="stack-lg"></div>
+      </section>
+
+      <section id="view-profile" class="view hidden">
+        <div class="card profile-card" id="profile-card"></div>
+        <div class="section-head">
+          <h2 id="profile-posts-title">Posts</h2>
+        </div>
+        <div id="profile-posts" class="stack-lg"></div>
+      </section>
+    </section>
+  </main>
+
+  <template id="post-template">
+    <article class="card post">
+      <div class="post-head">
+        <button class="avatar post-avatar" data-action="profile"></button>
+        <div class="post-meta">
+          <button class="post-author" data-action="profile"></button>
+          <div class="post-time muted"></div>
+        </div>
+      </div>
+      <p class="post-content"></p>
+      <div class="post-actions">
+        <button class="btn ghost small like-btn" data-action="like">
+          <span class="like-icon">♥</span> <span class="like-count">0</span>
+        </button>
+        <span class="muted comment-count"></span>
+      </div>
+      <div class="comments"></div>
+      <form class="comment-form">
+        <input name="comment" maxlength="300" placeholder="Write a comment..." required>
+        <button class="btn small" type="submit">Comment</button>
+      </form>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

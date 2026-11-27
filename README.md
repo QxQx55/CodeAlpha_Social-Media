@@ -82,7 +82,7 @@ CodeAlpha_Social-Media/
 ├── frontend/                # Static assets served by Express
 │   ├── index.html           # App shell, views and templates
 │   ├── app.js               # Hash router, state and API calls
-│   ├── styles.css           # Instagram-style design system
+│   ├── styles.css           # Dark cinematic design system
 │   └── uploads/             # User media (runtime, gitignored)
 │       └── .gitkeep
 ├── database/                # Persistent data
@@ -209,7 +209,7 @@ PORT=5000 npm start
 
 ### Demo accounts
 
-These accounts were created while exercising the API and remain in the repository's local `database/data.db` (excluded from Git):
+The app starts with an empty database. Register any account you like, or create these sample accounts for manual testing:
 
 | Username | Password |
 | --- | --- |
@@ -278,7 +278,7 @@ The image uses a multi-stage build, installs only production dependencies from `
 - Registration validates username format, phone number and password length.
 - Passwords are hashed with bcrypt (cost 10).
 - A signed JWT is stored in an `HttpOnly`, `SameSite=Lax` cookie with a 7-day lifetime.
-- `authRequired` protects writes; `optionalAuth` enriches public reads with viewer-specific state such as `liked` and `isFollowing`.
+- Guests can only see the landing page and sign in. Clicking any feature opens the **Sign up** tab, and after registering the user returns to the page they requested. Every feature route checks `authRequired` on both client and server; `optionalAuth` is used only by `/api/auth/me` to detect an existing session.
 
 ### Posts, reels and media
 
@@ -327,13 +327,13 @@ The same endpoint powers the header dropdown and the full search page.
 | POST | `/api/auth/login` | Log in | No |
 | POST | `/api/auth/logout` | Clear the session cookie | Yes |
 | GET | `/api/auth/me` | Current user profile | Optional |
-| GET | `/api/users/search?q=` | Search people | Optional |
-| GET | `/api/users/suggested` | Suggested people | Optional |
-| GET | `/api/users/:username` | User profile | Optional |
-| GET | `/api/users/:username/posts` | Posts by user | Optional |
-| GET | `/api/users/:username/reels` | Reels by user | Optional |
-| GET | `/api/users/:username/followers` | Followers list | Optional |
-| GET | `/api/users/:username/following` | Following list | Optional |
+| GET | `/api/users/search?q=` | Search people | Yes |
+| GET | `/api/users/suggested` | Suggested people | Yes |
+| GET | `/api/users/:username` | User profile | Yes |
+| GET | `/api/users/:username/posts` | Posts by user | Yes |
+| GET | `/api/users/:username/reels` | Reels by user | Yes |
+| GET | `/api/users/:username/followers` | Followers list | Yes |
+| GET | `/api/users/:username/following` | Following list | Yes |
 | PATCH | `/api/users/me` | Update profile / avatar / privacy | Yes |
 | POST | `/api/users/:username/follow` | Follow or request to follow | Yes |
 | DELETE | `/api/users/:username/follow` | Unfollow or cancel request | Yes |
@@ -346,11 +346,11 @@ The same endpoint powers the header dropdown and the full search page.
 | Method | Endpoint | Description | Auth |
 | --- | --- | --- | --- |
 | POST | `/api/uploads` | Upload one image | Yes |
-| GET | `/api/posts?feed=all\|following` | Latest posts | Optional |
-| GET | `/api/posts/:id` | Single post | Optional |
-| GET | `/api/posts/explore?tag=` | Popular posts, optional tag filter | Optional |
+| GET | `/api/posts?feed=all\|following` | Latest posts | Yes |
+| GET | `/api/posts/:id` | Single post | Yes |
+| GET | `/api/posts/explore?tag=` | Popular posts, optional tag filter | Yes |
 | GET | `/api/posts/saved` | Saved posts | Yes |
-| GET | `/api/reels` | Reels feed | Optional |
+| GET | `/api/reels` | Reels feed | Yes |
 | POST | `/api/posts` | Create post or reel | Yes |
 | DELETE | `/api/posts/:id` | Delete own post | Yes |
 | POST / DELETE | `/api/posts/:id/like` | Like / unlike | Yes |
@@ -363,7 +363,7 @@ The same endpoint powers the header dropdown and the full search page.
 
 | Method | Endpoint | Description | Auth |
 | --- | --- | --- | --- |
-| GET | `/api/stories` | Active stories grouped by user | Optional |
+| GET | `/api/stories` | Active stories grouped by user | Yes |
 | POST | `/api/stories` | Create story | Yes |
 | POST | `/api/stories/:id/view` | Mark story viewed | Yes |
 | DELETE | `/api/stories/:id` | Delete own story | Yes |
@@ -375,8 +375,8 @@ The same endpoint powers the header dropdown and the full search page.
 | GET | `/api/notifications` | Activity + unread count | Yes |
 | POST | `/api/notifications/read` | Mark all as read | Yes |
 | POST | `/api/notifications/:id/read` | Mark one as read | Yes |
-| GET | `/api/search?q=` | Unified search | Optional |
-| GET | `/api/tags/trending` | Trending hashtags | Optional |
+| GET | `/api/search?q=` | Unified search | Yes |
+| GET | `/api/tags/trending` | Trending hashtags | Yes |
 
 ---
 

@@ -74,18 +74,8 @@ function uploadedMedia(req) {
   if (!file) return null;
   return { url: `/uploads/${file.filename}`, type: mediaTypeOf(file) };
 }
-function normalizeImageUrl(value) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  if (v.startsWith("/uploads/")) return v;
-  if (isHttpUrl(v)) return v.slice(0, 500);
-  return null;
-}
-function normalizedMedia(value, fallbackType = "image") {
-  const url = normalizeImageUrl(value);
-  if (url === null) return null;
-  const type = /\.(mp4|webm|mov)(\?|$)/i.test(url) ? "video" : fallbackType;
-  return { url, type };
+function hasExternalMediaInput(req) {
+  return Boolean(String(req.body?.image_url || req.body?.media_url || "").trim());
 }
 
 function signToken(user) {
@@ -236,10 +226,22 @@ async function getProfile(username, viewerId) {
   };
 }
 
+async function canViewUser(targetUser, viewerId) {
+  if (!targetUser) return false;
+  if (!targetUser.is_private || targetUser.id === viewerId) return true;
+  if (!viewerId) return false;
+  const f = await get("SELECT 1 AS ok FROM follows WHERE follower_id = ? AND following_id = ?", [viewerId, targetUser.id]);
+  return !!f;
+}
+
+const VISIBLE_POST_SQL = `
+  (u.is_private = 0 OR u.id = ? OR EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id))
+`;
+
 async function getPostWithMeta(postId, viewerId) {
   const post = await get(
     `SELECT p.id, p.content, p.image_url, p.kind, p.media_type, p.created_at,
-            u.id AS user_id, u.username, u.avatar_url
+            u.id AS user_id, u.username, u.full_name, u.avatar_url
      FROM posts p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
     [postId]
   );
@@ -266,7 +268,7 @@ async function getPostWithMeta(postId, viewerId) {
     kind: post.kind || "post",
     tags: tags.map((t) => t.tag),
     created_at: post.created_at,
-    author: { id: post.user_id, username: post.username, avatar_url: post.avatar_url || "" },
+    author: { id: post.user_id, username: post.username, full_name: post.full_name || "", avatar_url: post.avatar_url || "" },
     likes: likes.count,
     liked: !!liked,
     saved: !!saved,
@@ -340,7 +342,7 @@ app.get("/api/auth/me", optionalAuth, async (req, res) => {
 });
 
 // ── Users ─────────────────────────────────────────────────────────────────
-app.get("/api/users/search", optionalAuth, async (req, res) => {
+app.get("/api/users/search", authRequired, async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (!q) return res.json({ users: [] });
@@ -358,9 +360,10 @@ app.get("/api/users/search", optionalAuth, async (req, res) => {
   }
 });
 
-app.get("/api/users/suggested", optionalAuth, async (req, res) => {
+app.get("/api/users/suggested", authRequired, async (req, res) => {
   try {
     const viewerId = req.user?.id || -1;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 30);
     const rows = await all(
       `SELECT u.id, u.username, u.full_name, u.bio, u.avatar_url, u.is_private, u.last_seen, u.created_at
        FROM users u
@@ -368,8 +371,8 @@ app.get("/api/users/suggested", optionalAuth, async (req, res) => {
          AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.following_id = u.id)
          AND NOT EXISTS (SELECT 1 FROM follow_requests fr WHERE fr.follower_id = ? AND fr.following_id = u.id)
        ORDER BY (SELECT COUNT(*) FROM follows f2 WHERE f2.following_id = u.id) DESC, u.created_at DESC
-       LIMIT 5`,
-      [viewerId, viewerId, viewerId]
+       LIMIT ?`,
+      [viewerId, viewerId, viewerId, limit]
     );
     res.json({ users: await usersWithFollowState(rows, req.user?.id) });
   } catch (err) {
@@ -384,10 +387,10 @@ app.patch("/api/users/me", authRequired, uploadMedia, async (req, res) => {
     const full_name = String(req.body.full_name ?? "").trim().slice(0, 80);
     const website = String(req.body.website ?? "").trim().slice(0, 200);
     const is_private = (req.body.is_private === "true" || req.body.is_private === "1" || req.body.is_private === true) ? 1 : 0;
+    if (hasExternalMediaInput(req)) return res.status(400).json({ error: "Avatar upload supports files only" });
     const media = uploadedMedia(req);
-    let avatar_url = String(req.body.avatar_url ?? "").trim().slice(0, 500);
-    if (media) avatar_url = media.url;
-    else if (avatar_url && !isHttpUrl(avatar_url) && !avatar_url.startsWith("/uploads/")) return res.status(400).json({ error: "Avatar must be a valid http(s) URL" });
+    const current = await get("SELECT avatar_url FROM users WHERE id = ?", [req.user.id]);
+    const avatar_url = media ? media.url : (current?.avatar_url || "");
     const phone = String(req.body.phone ?? "").trim().replace(/[\s()-]/g, "");
     if (!isValidPhone(phone)) return res.status(400).json({ error: "Enter a valid phone number (8-15 digits, optional +)" });
     const existingPhone = await get("SELECT id FROM users WHERE phone = ? AND id != ?", [phone, req.user.id]);
@@ -433,7 +436,7 @@ app.delete("/api/users/me/follow-requests/:username", authRequired, async (req, 
   res.json({ ok: true });
 });
 
-app.get("/api/users/:username", optionalAuth, async (req, res) => {
+app.get("/api/users/:username", authRequired, async (req, res) => {
   try {
     const profile = await getProfile(req.params.username, req.user?.id);
     if (!profile) return res.status(404).json({ error: "User not found" });
@@ -444,37 +447,39 @@ app.get("/api/users/:username", optionalAuth, async (req, res) => {
   }
 });
 
-app.get("/api/users/:username/posts", optionalAuth, async (req, res) => {
+app.get("/api/users/:username/posts", authRequired, async (req, res) => {
   try {
-    const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
+    const user = await get("SELECT id, is_private FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
+    if (!(await canViewUser(user, req.user?.id))) return res.json({ posts: [], privateLocked: true });
     const rows = await all(
       `SELECT id FROM posts WHERE user_id = ? AND kind = 'post' ORDER BY created_at DESC, id DESC`,
       [user.id]
     );
-    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+    res.json({ posts: await hydratePosts(rows, req.user?.id), privateLocked: false });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-app.get("/api/users/:username/reels", optionalAuth, async (req, res) => {
+app.get("/api/users/:username/reels", authRequired, async (req, res) => {
   try {
-    const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
+    const user = await get("SELECT id, is_private FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
+    if (!(await canViewUser(user, req.user?.id))) return res.json({ posts: [], privateLocked: true });
     const rows = await all(
       `SELECT id FROM posts WHERE user_id = ? AND kind = 'reel' ORDER BY created_at DESC, id DESC`,
       [user.id]
     );
-    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+    res.json({ posts: await hydratePosts(rows, req.user?.id), privateLocked: false });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-app.get("/api/users/:username/followers", optionalAuth, async (req, res) => {
+app.get("/api/users/:username/followers", authRequired, async (req, res) => {
   try {
     const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -490,7 +495,7 @@ app.get("/api/users/:username/followers", optionalAuth, async (req, res) => {
   }
 });
 
-app.get("/api/users/:username/following", optionalAuth, async (req, res) => {
+app.get("/api/users/:username/following", authRequired, async (req, res) => {
   try {
     const user = await get("SELECT id FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -512,11 +517,11 @@ app.post("/api/users/:username/follow", authRequired, async (req, res) => {
     if (!target) return res.status(404).json({ error: "User not found" });
     if (target.id === req.user.id) return res.status(400).json({ error: "Cannot follow yourself" });
     if (target.is_private) {
-      await run("INSERT OR IGNORE INTO follow_requests (follower_id, following_id) VALUES (?, ?)", [req.user.id, target.id]);
-      await createNotification(target.id, req.user.id, "follow_request");
+      const result = await run("INSERT OR IGNORE INTO follow_requests (follower_id, following_id) VALUES (?, ?)", [req.user.id, target.id]);
+      if (result.changes) await createNotification(target.id, req.user.id, "follow_request");
     } else {
-      await run("INSERT OR IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)", [req.user.id, target.id]);
-      await createNotification(target.id, req.user.id, "follow");
+      const result = await run("INSERT OR IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)", [req.user.id, target.id]);
+      if (result.changes) await createNotification(target.id, req.user.id, "follow");
     }
     res.json({ user: await getProfile(target.username || req.params.username, req.user.id) });
   } catch (err) {
@@ -544,49 +549,59 @@ app.post("/api/uploads", authRequired, uploadSingle("image"), (req, res) => {
   res.status(201).json({ url: `/uploads/${req.file.filename}`, media_type: mediaTypeOf(req.file) });
 });
 
-app.get("/api/posts", optionalAuth, async (req, res) => {
+app.get("/api/posts", authRequired, async (req, res) => {
   try {
     const feed = String(req.query.feed || "all");
+    const viewerId = req.user?.id || -1;
     let rows;
     if (feed === "following" && req.user) {
       rows = await all(
         `SELECT id FROM posts WHERE kind = 'post' AND (user_id IN (SELECT following_id FROM follows WHERE follower_id = ?) OR user_id = ?)
          ORDER BY created_at DESC, id DESC LIMIT 50`,
-        [req.user.id, req.user.id]
+        [viewerId, viewerId]
       );
     } else {
-      rows = await all(`SELECT id FROM posts WHERE kind = 'post' ORDER BY created_at DESC, id DESC LIMIT 50`);
+      rows = await all(
+        `SELECT p.id FROM posts p JOIN users u ON u.id = p.user_id
+         WHERE p.kind = 'post' AND ${VISIBLE_POST_SQL}
+         ORDER BY p.created_at DESC, p.id DESC LIMIT 50`,
+        [viewerId, viewerId]
+      );
     }
-    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+    res.json({ posts: await hydratePosts(rows, viewerId) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-app.get("/api/posts/explore", optionalAuth, async (req, res) => {
+app.get("/api/posts/explore", authRequired, async (req, res) => {
   try {
     const tag = String(req.query.tag || "").trim().toLowerCase();
+    const viewerId = req.user?.id || -1;
     let rows;
     if (tag) {
       rows = await all(
         `SELECT p.id FROM posts p
+         JOIN users u ON u.id = p.user_id
          JOIN post_hashtags ph ON ph.post_id = p.id JOIN hashtags h ON h.id = ph.tag_id
-         WHERE h.tag = ? COLLATE NOCASE GROUP BY p.id
+         WHERE h.tag = ? COLLATE NOCASE AND ${VISIBLE_POST_SQL} GROUP BY p.id
          ORDER BY (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) DESC, p.created_at DESC LIMIT 50`,
-        [tag]
+        [tag, viewerId, viewerId]
       );
     } else {
       rows = await all(
         `SELECT p.id FROM posts p
+         JOIN users u ON u.id = p.user_id
          LEFT JOIN likes l ON l.post_id = p.id
-         WHERE p.kind = 'post'
+         WHERE p.kind = 'post' AND ${VISIBLE_POST_SQL}
          GROUP BY p.id
          ORDER BY COUNT(l.user_id) DESC, p.created_at DESC
-         LIMIT 30`
+         LIMIT 30`,
+        [viewerId, viewerId]
       );
     }
-    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+    res.json({ posts: await hydratePosts(rows, viewerId) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -606,10 +621,16 @@ app.get("/api/posts/saved", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/reels", optionalAuth, async (req, res) => {
+app.get("/api/reels", authRequired, async (req, res) => {
   try {
-    const rows = await all(`SELECT id FROM posts WHERE kind = 'reel' ORDER BY created_at DESC, id DESC LIMIT 50`);
-    res.json({ posts: await hydratePosts(rows, req.user?.id) });
+    const viewerId = req.user?.id || -1;
+    const rows = await all(
+      `SELECT p.id FROM posts p JOIN users u ON u.id = p.user_id
+       WHERE p.kind = 'reel' AND ${VISIBLE_POST_SQL}
+       ORDER BY p.created_at DESC, p.id DESC LIMIT 50`,
+      [viewerId, viewerId]
+    );
+    res.json({ posts: await hydratePosts(rows, viewerId) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -620,13 +641,11 @@ app.post("/api/posts", authRequired, uploadMedia, async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
     const kind = String(req.body.kind || "post") === "reel" ? "reel" : "post";
-    const uploaded = uploadedMedia(req);
-    const raw = uploaded?.url || String(req.body.image_url || "").trim();
-    const media = uploaded || normalizedMedia(raw, uploaded?.type || "image");
-    if (media === null) return res.status(400).json({ error: "Media must be a valid URL or uploaded file" });
-    if (!content && !media.url) return res.status(400).json({ error: "Post must have text or media" });
+    if (hasExternalMediaInput(req)) return res.status(400).json({ error: "Media upload supports files only" });
+    const media = uploadedMedia(req) || { url: "", type: "image" };
+    if (!content && !media.url) return res.status(400).json({ error: "Post must have text or an uploaded file" });
     if (content.length > 2200) return res.status(400).json({ error: "Caption must be 2200 characters or less" });
-    if (kind === "reel" && !media.url) return res.status(400).json({ error: "Reels need a video or image" });
+    if (kind === "reel" && !media.url) return res.status(400).json({ error: "Reels need an uploaded video or image file" });
     const result = await run(
       "INSERT INTO posts (user_id, content, image_url, media_type, kind) VALUES (?, ?, ?, ?, ?)",
       [req.user.id, content, media.url, media.type, kind]
@@ -640,11 +659,31 @@ app.post("/api/posts", authRequired, uploadMedia, async (req, res) => {
   }
 });
 
-app.get("/api/posts/:id", optionalAuth, async (req, res) => {
+app.get("/api/posts/:id", authRequired, async (req, res) => {
   try {
+    const owner = await get("SELECT u.id, u.is_private FROM posts p JOIN users u ON u.id = p.user_id WHERE p.id = ?", [req.params.id]);
+    if (!owner) return res.status(404).json({ error: "Post not found" });
+    if (!(await canViewUser(owner, req.user?.id))) return res.status(403).json({ error: "This account is private" });
     const post = await getPostWithMeta(req.params.id, req.user?.id);
     if (!post) return res.status(404).json({ error: "Post not found" });
     res.json({ post });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.patch("/api/posts/:id", authRequired, async (req, res) => {
+  try {
+    const post = await get("SELECT id, user_id, image_url FROM posts WHERE id = ?", [req.params.id]);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    if (post.user_id !== req.user.id) return res.status(403).json({ error: "Not allowed" });
+    const content = String(req.body.content || "").trim();
+    if (!content && !post.image_url) return res.status(400).json({ error: "Post must have text or media" });
+    if (content.length > 2200) return res.status(400).json({ error: "Caption must be 2200 characters or less" });
+    await run("UPDATE posts SET content = ? WHERE id = ?", [content, post.id]);
+    await syncPostTags(post.id, content);
+    res.json({ post: await getPostWithMeta(post.id, req.user.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
@@ -668,8 +707,8 @@ async function postLike(req, res, like) {
   const post = await get("SELECT id, user_id FROM posts WHERE id = ?", [req.params.id]);
   if (!post) return res.status(404).json({ error: "Post not found" });
   if (like) {
-    await run("INSERT OR IGNORE INTO likes (user_id, post_id) VALUES (?, ?)", [req.user.id, post.id]);
-    await createNotification(post.user_id, req.user.id, "like", { post_id: post.id });
+    const result = await run("INSERT OR IGNORE INTO likes (user_id, post_id) VALUES (?, ?)", [req.user.id, post.id]);
+    if (result.changes) await createNotification(post.user_id, req.user.id, "like", { post_id: post.id });
   } else {
     await run("DELETE FROM likes WHERE user_id = ? AND post_id = ?", [req.user.id, post.id]);
   }
@@ -691,11 +730,9 @@ app.delete("/api/posts/:id/save", authRequired, (req, res) => postSave(req, res,
 app.post("/api/posts/:id/comments", authRequired, uploadMedia, async (req, res) => {
   try {
     const content = String(req.body.content || "").trim();
-    const uploaded = uploadedMedia(req);
-    const raw = uploaded?.url || String(req.body.image_url || "").trim();
-    const media = uploaded || normalizedMedia(raw);
-    if (media === null) return res.status(400).json({ error: "Media must be a valid URL or uploaded file" });
-    if (!content && !media.url) return res.status(400).json({ error: "Comment must have text or media" });
+    if (hasExternalMediaInput(req)) return res.status(400).json({ error: "Media upload supports files only" });
+    const media = uploadedMedia(req) || { url: "", type: "image" };
+    if (!content && !media.url) return res.status(400).json({ error: "Comment must have text or an uploaded file" });
     if (content.length > 1000) return res.status(400).json({ error: "Comment must be 1000 characters or less" });
     const post = await get("SELECT id, user_id FROM posts WHERE id = ?", [req.params.id]);
     if (!post) return res.status(404).json({ error: "Post not found" });
@@ -715,8 +752,8 @@ app.post("/api/posts/:id/comments", authRequired, uploadMedia, async (req, res) 
 app.post("/api/comments/:id/like", authRequired, async (req, res) => {
   const comment = await get("SELECT id, user_id, post_id FROM comments WHERE id = ?", [req.params.id]);
   if (!comment) return res.status(404).json({ error: "Comment not found" });
-  await run("INSERT OR IGNORE INTO comment_likes (user_id, comment_id) VALUES (?, ?)", [req.user.id, comment.id]);
-  await createNotification(comment.user_id, req.user.id, "comment_like", { post_id: comment.post_id, comment_id: comment.id });
+  const result = await run("INSERT OR IGNORE INTO comment_likes (user_id, comment_id) VALUES (?, ?)", [req.user.id, comment.id]);
+  if (result.changes) await createNotification(comment.user_id, req.user.id, "comment_like", { post_id: comment.post_id, comment_id: comment.id });
   res.json({ post: await getPostWithMeta(comment.post_id, req.user.id) });
 });
 app.delete("/api/comments/:id/like", authRequired, async (req, res) => {
@@ -741,7 +778,7 @@ app.delete("/api/comments/:id", authRequired, async (req, res) => {
 });
 
 // ── Stories ───────────────────────────────────────────────────────────────
-app.get("/api/stories", optionalAuth, async (req, res) => {
+app.get("/api/stories", authRequired, async (req, res) => {
   try {
     const viewerId = req.user?.id || -1;
     const rows = await all(
@@ -751,8 +788,9 @@ app.get("/api/stories", optionalAuth, async (req, res) => {
               EXISTS(SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = ?) AS seen
        FROM stories s JOIN users u ON u.id = s.user_id
        WHERE s.created_at >= datetime('now', '-1 day')
+         AND ${VISIBLE_POST_SQL}
        ORDER BY s.created_at ASC`,
-      [viewerId]
+      [viewerId, viewerId, viewerId]
     );
     const groups = [];
     const byUser = new Map();
@@ -760,13 +798,13 @@ app.get("/api/stories", optionalAuth, async (req, res) => {
       if (!byUser.has(r.user_id)) {
         const group = {
           user: { id: r.user_id, username: r.username, avatar_url: r.avatar_url || "" },
-          seen: !!r.seen,
+          seen: true,
           stories: [],
         };
         byUser.set(r.user_id, group);
         groups.push(group);
       }
-      byUser.get(r.user_id).stories.push({
+      const st = {
         id: r.id,
         media_url: r.media_url,
         media_type: r.media_type,
@@ -774,7 +812,9 @@ app.get("/api/stories", optionalAuth, async (req, res) => {
         created_at: r.created_at,
         views: r.views,
         seen: !!r.seen,
-      });
+      };
+      byUser.get(r.user_id).stories.push(st);
+      if (!st.seen) byUser.get(r.user_id).seen = false;
     }
     groups.sort((a, b) => (a.user.id === viewerId ? -1 : b.user.id === viewerId ? 1 : 0));
     res.json({ stories: groups });
@@ -786,10 +826,9 @@ app.get("/api/stories", optionalAuth, async (req, res) => {
 
 app.post("/api/stories", authRequired, uploadMedia, async (req, res) => {
   try {
-    const uploaded = uploadedMedia(req);
-    const raw = uploaded?.url || String(req.body.media_url || "").trim();
-    const media = uploaded || normalizedMedia(raw);
-    if (!media?.url) return res.status(400).json({ error: "Story needs an image or video" });
+    if (hasExternalMediaInput(req)) return res.status(400).json({ error: "Story upload supports files only" });
+    const media = uploadedMedia(req);
+    if (!media?.url) return res.status(400).json({ error: "Story needs an uploaded image or video file" });
     const caption = String(req.body.caption || "").trim().slice(0, 300);
     const result = await run(
       "INSERT INTO stories (user_id, media_url, media_type, caption) VALUES (?, ?, ?, ?)",
@@ -868,9 +907,9 @@ app.post("/api/messages/:username", authRequired, uploadMedia, async (req, res) 
   const user = await get("SELECT id, username FROM users WHERE username = ? COLLATE NOCASE", [req.params.username]);
   if (!user) return res.status(404).json({ error: "User not found" });
   const body = String(req.body.body || "").trim().slice(0, 2000);
-  const uploaded = uploadedMedia(req);
-  const media = uploaded || normalizedMedia(String(req.body.image_url || ""));
-  if (!body && !media?.url) return res.status(400).json({ error: "Write a message or attach media" });
+  if (hasExternalMediaInput(req)) return res.status(400).json({ error: "Media upload supports files only" });
+  const media = uploadedMedia(req);
+  if (!body && !media?.url) return res.status(400).json({ error: "Write a message or upload a file" });
   const result = await run(
     "INSERT INTO messages (sender_id, recipient_id, body, image_url) VALUES (?, ?, ?, ?)",
     [req.user.id, user.id, body, media?.url || ""]
@@ -935,7 +974,7 @@ app.post("/api/notifications/:id/read", authRequired, async (req, res) => {
 });
 
 // ── Unified real search ───────────────────────────────────────────────────
-app.get("/api/search", optionalAuth, async (req, res) => {
+app.get("/api/search", authRequired, async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (!q) return res.json({ users: [], posts: [], tags: [] });
@@ -949,11 +988,13 @@ app.get("/api/search", optionalAuth, async (req, res) => {
       ),
       all(
         `SELECT DISTINCT p.id FROM posts p
+         JOIN users u ON u.id = p.user_id
          LEFT JOIN post_hashtags ph ON ph.post_id = p.id
          LEFT JOIN hashtags h ON h.id = ph.tag_id
-         WHERE p.content COLLATE NOCASE LIKE ? ESCAPE '\\' OR h.tag COLLATE NOCASE LIKE ? ESCAPE '\\'
+         WHERE (p.content COLLATE NOCASE LIKE ? ESCAPE '\\' OR h.tag COLLATE NOCASE LIKE ? ESCAPE '\\')
+           AND ${VISIBLE_POST_SQL}
          ORDER BY p.created_at DESC LIMIT 20`,
-        [like, `%${q.replace(/^#/, "").replace(/[\\%_]/g, "\\$&")}%`]
+        [like, `%${q.replace(/^#/, "").replace(/[\\%_]/g, "\\$&")}%`, req.user.id, req.user.id]
       ),
       all(
         `SELECT h.tag, COUNT(ph.post_id) AS posts FROM hashtags h
@@ -973,7 +1014,7 @@ app.get("/api/search", optionalAuth, async (req, res) => {
   }
 });
 
-app.get("/api/tags/trending", optionalAuth, async (_req, res) => {
+app.get("/api/tags/trending", authRequired, async (_req, res) => {
   const rows = await all(
     `SELECT h.tag, COUNT(ph.post_id) AS posts FROM hashtags h
      JOIN post_hashtags ph ON ph.tag_id = h.id GROUP BY h.id ORDER BY posts DESC, h.tag LIMIT 10`

@@ -1,29 +1,41 @@
-﻿const state = {
+const state = {
   user: null,
   route: { name: "feed", param: null },
   feedMode: "all",
   profileTab: "posts",
   createKind: "post",
   createFile: null,
-  createStream: null,
-  createRecorder: null,
   createPreviewUrl: null,
+  inlineFile: null,
+  inlinePreviewUrl: null,
+  replyPolicyIndex: 0,
   storyGroups: [],
   storyGroupIndex: 0,
   storyIndex: 0,
   storyTimer: null,
   conversation: null,
   messages: [],
+  redirectAfterAuth: null,
 };
+
+const REPLY_POLICIES = ["Anyone can reply", "Profiles you follow", "Mentioned only"];
+const GUEST_ALLOWED_ROUTES = new Set(["auth"]);
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const esc = (v = "") => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const esc = (v = "") =>
+  String(v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const fmtDate = (iso) => {
   const d = new Date((iso || "").replace(" ", "T") + "Z");
   if (Number.isNaN(d.getTime())) return "";
   const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return "just now";
+  if (diff < 60) return "now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
@@ -32,10 +44,11 @@ const fmtDate = (iso) => {
 
 function toast(msg, err = false) {
   const el = $("#message");
+  if (!el) return;
   el.textContent = msg;
   el.className = `toast show${err ? " error" : ""}`;
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => { el.classList.remove("show"); }, 3200);
+  toast.t = setTimeout(() => el.classList.remove("show"), 3200);
 }
 
 async function api(path, opts = {}) {
@@ -58,15 +71,33 @@ function parseHash() {
   if (p[0] === "reels") return { name: "reels" };
   if (p[0] === "messages") return { name: "messages", param: p[1] ? decodeURIComponent(p[1]) : null };
   if (p[0] === "notifications") return { name: "notifications" };
-  if (p[0] === "explore") return { name: "explore" };
   if (p[0] === "saved") return { name: "saved" };
-  if (p[0] === "login") return { name: "auth" };
+  if (p[0] === "login" || p[0] === "register") return { name: "auth", param: p[0] };
   return { name: "feed" };
 }
-const nav = (hash) => { location.hash = hash; };
+
+const nav = (hash) => {
+  location.hash = hash;
+};
+
+function finishAuth(message) {
+  const authHashes = ["#/login", "#/register"];
+  const target = state.redirectAfterAuth && !authHashes.includes(state.redirectAfterAuth) ? state.redirectAfterAuth : "#/";
+  state.redirectAfterAuth = null;
+  toast(message);
+  nav(target);
+}
+
+function setAuthTab(register) {
+  $$("[data-auth-tab]").forEach((tab) =>
+    tab.classList.toggle("active", tab.dataset.authTab === (register ? "register" : "login"))
+  );
+  $("#login-form")?.classList.toggle("hidden", register);
+  $("#register-form")?.classList.toggle("hidden", !register);
+}
 
 function avatarHTML(user, cls = "avatar") {
-  const letter = esc((user?.username || "?")[0].toUpperCase());
+  const letter = esc((user?.full_name || user?.username || "?")[0].toUpperCase());
   const img = user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.remove()">` : "";
   return `<span class="${cls}">${img}${letter}</span>`;
 }
@@ -83,134 +114,247 @@ function setBadge(selector, count) {
 }
 
 async function renderBadges() {
-  if (!state.user) { setBadge("#msg-badge", 0); setBadge("#notif-badge", 0); return; }
+  if (!state.user) {
+    setBadge("#msg-badge", 0);
+    setBadge("#notif-badge", 0);
+    return;
+  }
   try {
-    const [m, n] = await Promise.all([
-      api("/api/messages/unread"),
-      api("/api/notifications"),
-    ]);
+    const [m, n] = await Promise.all([api("/api/messages/unread"), api("/api/notifications")]);
     setBadge("#msg-badge", m.count);
     setBadge("#notif-badge", n.unread);
   } catch {}
 }
 
-function renderAuthActions() {
-  const el = $("#auth-actions");
-  if (state.user) {
-    el.innerHTML = `<button class="btn ghost small" id="logout-btn">Log out</button>`;
-    $("#logout-btn").onclick = async () => {
-      await api("/api/auth/logout", { method: "POST" });
-      state.user = null; state.conversation = null;
-      toast("Logged out");
-      syncUI(); nav("#/");
-    };
-  } else {
-    el.innerHTML = `<a class="btn primary small" href="#/login">Log in</a>`;
-  }
-}
-
-function renderNavAvatar() {
-  const el = $("#nav-avatar");
-  if (!state.user) { el.textContent = "?"; return; }
-  el.innerHTML = "";
-  if (state.user.avatar_url) {
-    const img = document.createElement("img");
-    img.src = state.user.avatar_url;
-    img.alt = "";
-    img.onerror = () => { el.textContent = state.user.username[0].toUpperCase(); };
-    el.appendChild(img);
-  } else {
-    el.textContent = state.user.username[0].toUpperCase();
-  }
-}
-
-function renderSideUser() {
-  const el = $("#side-user");
-  if (!state.user) {
-    el.innerHTML = `<div class="side-user-row"><div class="side-user-info"><span class="name">Welcome to Wave</span><span class="sub">Sign in to share and connect</span></div></div><div style="margin-top:12px"><a class="btn primary btn-block small" href="#/login">Log in</a></div>`;
-    return;
-  }
-  const u = state.user;
-  el.innerHTML = `
-    <div class="side-user-row">
-      ${avatarHTML(u, "avatar")}
-      <div class="side-user-info">
-        <a href="#/profile/${esc(u.username)}" class="name">${esc(u.username)}</a>
-        <span class="sub">${esc(u.full_name || u.bio || "Welcome back")}</span>
-      </div>
-      <a href="#/profile/${esc(u.username)}" class="btn-text">Profile</a>
-    </div>`;
+async function logoutUser() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch {}
+  state.user = null;
+  state.conversation = null;
+  state.redirectAfterAuth = null;
+  toast("Logged out");
+  syncUI();
+  nav("#/");
 }
 
 async function renderSuggestions() {
   const el = $("#suggested-list");
+  if (!el) return;
   try {
     const { users } = await api("/api/users/suggested");
-    if (!users.length) { el.innerHTML = `<p class="muted" style="font-size:13px">No suggestions right now.</p>`; return; }
-    el.innerHTML = users.map((u) => `
+    if (!users.length) {
+      el.innerHTML = `<p class="muted small">No suggestions right now.</p>`;
+      return;
+    }
+    el.innerHTML = users
+      .map(
+        (u) => `
       <div class="suggest-row">
         ${avatarHTML(u, "avatar xs")}
         <div class="s-info">
-          <span class="s-name" data-user="${esc(u.username)}">${esc(u.username)}</span>
-          <span class="s-sub">${esc(u.full_name || u.bio || "Suggested for you")}</span>
+          <span class="s-name" data-user="${esc(u.username)}">${esc(u.full_name || u.username)}</span>
+          <span class="s-sub">@${esc(u.username)}</span>
         </div>
-        ${state.user && !u.isMe ? `<button class="btn-text" data-follow="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}" data-requested="${u.isRequested ? "1" : "0"}">${u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow"}</button>` : ""}
-      </div>`).join("");
-    el.querySelectorAll("[data-user]").forEach((n) => n.onclick = () => nav(`#/profile/${encodeURIComponent(n.dataset.user)}`));
+        ${
+          state.user && !u.isMe
+            ? `<button class="btn-text" type="button" data-follow="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}" data-requested="${u.isRequested ? "1" : "0"}">${
+                u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow"
+              }</button>`
+            : ""
+        }
+      </div>`
+      )
+      .join("");
+    el.querySelectorAll("[data-user]").forEach((n) => (n.onclick = () => nav(`#/profile/${encodeURIComponent(n.dataset.user)}`)));
     el.querySelectorAll("[data-follow]").forEach((btn) => {
       btn.onclick = async () => {
         if (!state.user) return nav("#/login");
         const username = btn.dataset.follow;
-        const following = btn.dataset.following === "1";
+        const following = btn.dataset.following === "1" || btn.dataset.requested === "1";
         btn.disabled = true;
         try {
-          const res = await api(`/api/users/${encodeURIComponent(username)}/follow`, { method: following ? "DELETE" : "POST" });
+          const res = await api(`/api/users/${encodeURIComponent(username)}/follow`, {
+            method: following ? "DELETE" : "POST",
+          });
           const u = res.user;
           btn.dataset.following = u.isFollowing ? "1" : "0";
           btn.dataset.requested = u.isRequested ? "1" : "0";
           btn.textContent = u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow";
           if (state.route.name === "profile") refresh();
-        } catch (e) { toast(e.message, true); }
-        finally { btn.disabled = false; }
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          btn.disabled = false;
+        }
       };
     });
-  } catch { el.innerHTML = ""; }
+  } catch {
+    el.innerHTML = "";
+  }
+}
+
+async function renderTrending() {
+  const el = $("#trending-content");
+  if (!el) return;
+  try {
+    const { posts } = await api("/api/posts/explore");
+    const post = posts[0];
+    if (!post) {
+      el.innerHTML = `<p class="muted trend-empty">Trending threads will appear here.</p>`;
+      return;
+    }
+    const media = post.image_url
+      ? post.media_type === "video"
+        ? `<video class="trend-media" src="${esc(post.image_url)}" muted playsinline></video>`
+        : `<img class="trend-media" src="${esc(post.image_url)}" alt="" loading="lazy">`
+      : "";
+    el.innerHTML = `
+      <button class="trend-story" type="button">
+        <span class="trend-author">${avatarHTML(post.author, "avatar xs")}<strong>${esc(post.author.username)}</strong><span>${esc(fmtDate(post.created_at))}</span></span>
+        <span class="trend-copy">${esc(post.content || "A thread from the community")}</span>
+        ${media}
+      </button>`;
+    el.querySelector(".trend-story").onclick = () => nav(`#/post/${post.id}`);
+  } catch (e) {
+    el.innerHTML = `<p class="muted trend-empty">Couldn't load threads: ${esc(e.message)}</p>`;
+  }
 }
 
 function syncUI() {
-  renderAuthActions();
-  renderNavAvatar();
-  renderSideUser();
+  document.body.classList.toggle("is-guest", !state.user);
+  document.body.classList.toggle("is-member", !!state.user);
   $$(".auth-only").forEach((el) => el.classList.toggle("hidden", !state.user));
+
   const cc = $("#composer-card");
   if (cc) cc.classList.toggle("hidden", !state.user);
   if (state.user) {
     const ca = $("#composer-avatar");
-    ca.innerHTML = "";
-    if (state.user.avatar_url) {
-      const img = document.createElement("img");
-      img.src = state.user.avatar_url;
-      img.onerror = () => { ca.textContent = state.user.username[0].toUpperCase(); };
-      ca.appendChild(img);
-    } else ca.textContent = state.user.username[0].toUpperCase();
+    const cn = $("#composer-name");
+    if (cn) cn.textContent = state.user.full_name || state.user.username;
+    if (ca) {
+      ca.innerHTML = "";
+      if (state.user.avatar_url) {
+        const img = document.createElement("img");
+        img.src = state.user.avatar_url;
+        img.alt = "";
+        img.onerror = () => {
+          ca.textContent = (state.user.full_name || state.user.username)[0].toUpperCase();
+        };
+        ca.appendChild(img);
+      } else {
+        ca.textContent = (state.user.full_name || state.user.username)[0].toUpperCase();
+      }
+    }
   }
   renderBadges();
 }
 
 async function loadMe() {
-  try { state.user = (await api("/api/auth/me")).user; } catch { state.user = null; }
+  try {
+    state.user = (await api("/api/auth/me")).user;
+  } catch {
+    state.user = null;
+  }
   syncUI();
 }
 
-function stopMediaStream(stream) {
-  if (stream) stream.getTracks().forEach((t) => t.stop());
+// ── Inline Thread Composer ────────────────────────────────────────────────
+function clearInlineAttachment() {
+  state.inlineFile = null;
+  if (state.inlinePreviewUrl) URL.revokeObjectURL(state.inlinePreviewUrl);
+  state.inlinePreviewUrl = null;
+  const chip = $("#composer-file-chip");
+  const preview = $("#composer-inline-preview");
+  const fileInput = $("#composer-file");
+  if (chip) chip.classList.add("hidden");
+  if (preview) {
+    preview.classList.add("hidden");
+    preview.innerHTML = "";
+  }
+  if (fileInput) fileInput.value = "";
 }
 
-// ── Create post / reel / story ────────────────────────────────────────────
+function setInlineAttachment(file) {
+  if (!file) return;
+  state.inlineFile = file;
+  if (state.inlinePreviewUrl) URL.revokeObjectURL(state.inlinePreviewUrl);
+  state.inlinePreviewUrl = URL.createObjectURL(file);
+
+  const chip = $("#composer-file-chip");
+  const nameEl = $("#composer-file-name");
+  const preview = $("#composer-inline-preview");
+  if (nameEl) nameEl.textContent = file.name || "attachment";
+  if (chip) chip.classList.remove("hidden");
+
+  if (preview) {
+    const isVideo = file.type.startsWith("video/");
+    preview.innerHTML = isVideo
+      ? `<video src="${state.inlinePreviewUrl}" controls playsinline></video>`
+      : `<img src="${state.inlinePreviewUrl}" alt="Attachment preview">`;
+    preview.classList.remove("hidden");
+  }
+}
+
+function bindInlineComposer() {
+  const form = $("#composer-card");
+  const input = $("#composer-input");
+  const fileInput = $("#composer-file");
+  const clearBtn = $("#composer-file-clear");
+  const replyToggle = $("#composer-reply-toggle");
+  const replyLabel = $("#composer-reply-label");
+  const postBtn = $("#composer-post-btn");
+  if (!form || !input) return;
+
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+  });
+
+  fileInput?.addEventListener("change", () => {
+    const f = fileInput.files?.[0];
+    if (f) setInlineAttachment(f);
+  });
+
+  clearBtn?.addEventListener("click", clearInlineAttachment);
+
+  replyToggle?.addEventListener("click", () => {
+    state.replyPolicyIndex = (state.replyPolicyIndex + 1) % REPLY_POLICIES.length;
+    if (replyLabel) replyLabel.textContent = REPLY_POLICIES[state.replyPolicyIndex];
+  });
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!state.user) return nav("#/login");
+    const content = input.value.trim();
+    if (!content && !state.inlineFile) {
+      input.focus();
+      return toast("Write something or attach a file", true);
+    }
+    postBtn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append("content", content);
+      fd.append("kind", "post");
+      if (state.inlineFile) fd.append("media", state.inlineFile);
+      await api("/api/posts", { method: "POST", body: fd });
+      input.value = "";
+      input.style.height = "auto";
+      clearInlineAttachment();
+      toast("Thread posted");
+      loadFeed();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      postBtn.disabled = false;
+    }
+  };
+}
+
+// ── Create post / reel / story modal (File Upload Only) ──────────────────
 function resetCreate() {
   state.createFile = null;
   $("#create-caption").value = "";
-  $("#create-url").value = "";
   $("#create-count").textContent = "0/2200";
   const preview = $("#create-preview");
   if (state.createPreviewUrl) URL.revokeObjectURL(state.createPreviewUrl);
@@ -218,7 +362,6 @@ function resetCreate() {
   preview.classList.add("hidden");
   preview.innerHTML = "";
   $("#create-file").value = "";
-  stopCreateCamera();
 }
 
 function openCreate(kind = "post") {
@@ -226,10 +369,9 @@ function openCreate(kind = "post") {
   state.createKind = kind;
   resetCreate();
   $$(".create-tab").forEach((b) => b.classList.toggle("active", b.dataset.kind === kind));
-  $("#create-share").textContent = kind === "story" ? "Share story" : "Share";
-  $("#create-caption").placeholder = kind === "story"
-    ? "Add a caption to your story (optional)"
-    : "Write a caption... use #hashtags and @mentions";
+  $("#create-share").textContent = kind === "story" ? "Share story" : "Post";
+  $("#create-caption").placeholder =
+    kind === "story" ? "Add a caption to your story (optional)" : "Start a thread... use #hashtags and @mentions";
   $("#create-modal").classList.remove("hidden");
   setTimeout(() => $("#create-caption").focus(), 50);
 }
@@ -237,16 +379,14 @@ function openCreate(kind = "post") {
 function setCreateFile(file) {
   if (!file) return;
   state.createFile = file;
-  $("#create-url").value = "";
   $("#create-file").value = "";
   const preview = $("#create-preview");
   if (state.createPreviewUrl) URL.revokeObjectURL(state.createPreviewUrl);
   state.createPreviewUrl = URL.createObjectURL(file);
   const isVideo = file.type.startsWith("video/");
-  preview.innerHTML = `${isVideo
-    ? `<video src="${state.createPreviewUrl}" controls playsinline></video>`
-    : `<img src="${state.createPreviewUrl}" alt="Preview">`}
-    <button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
+  preview.innerHTML = `${
+    isVideo ? `<video src="${state.createPreviewUrl}" controls playsinline></video>` : `<img src="${state.createPreviewUrl}" alt="Preview">`
+  }<button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
   preview.classList.remove("hidden");
   preview.querySelector(".remove-media").onclick = () => {
     state.createFile = null;
@@ -257,82 +397,23 @@ function setCreateFile(file) {
   };
 }
 
-async function startCreateCamera() {
-  try {
-    stopCreateCamera();
-    state.createStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
-    $("#create-camera-video").srcObject = state.createStream;
-    $("#create-camera").classList.remove("hidden");
-  } catch {
-    toast("Camera unavailable. You can upload a photo or video instead.", true);
-  }
-}
-function stopCreateCamera() {
-  stopMediaStream(state.createStream);
-  state.createStream = null;
-  const video = $("#create-camera-video");
-  if (video) video.srcObject = null;
-  $("#create-camera")?.classList.add("hidden");
-  if (state.createRecorder?.state === "recording") state.createRecorder.stop();
-  state.createRecorder = null;
-  const recBtn = $("#create-record-video");
-  if (recBtn) recBtn.textContent = "Record video";
-}
-function captureCreatePhoto() {
-  const video = $("#create-camera-video");
-  if (!video.videoWidth) return;
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-  canvas.toBlob((blob) => {
-    if (blob) { setCreateFile(new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" })); stopCreateCamera(); }
-  }, "image/jpeg", 0.92);
-}
-function toggleRecordVideo() {
-  const btn = $("#create-record-video");
-  if (state.createRecorder?.state === "recording") { state.createRecorder.stop(); return; }
-  if (!state.createStream) return toast("Open the camera first", true);
-  const mime = MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "";
-  const chunks = [];
-  state.createRecorder = new MediaRecorder(state.createStream, mime ? { mimeType: mime } : undefined);
-  state.createRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  state.createRecorder.onstop = () => {
-    const blob = new Blob(chunks, { type: mime || "video/webm" });
-    if (blob.size) setCreateFile(new File([blob], `camera-${Date.now()}.webm`, { type: blob.type }));
-    btn.textContent = "Record video";
-    state.createRecorder = null;
-    stopCreateCamera();
-  };
-  state.createRecorder.start();
-  btn.textContent = "Stop recording";
-}
-
 function bindCreate() {
-  $$(".create-tab").forEach((tab) => tab.onclick = () => openCreate(tab.dataset.kind));
-  $("#create-file").onchange = (e) => { const f = e.target.files?.[0]; if (f) setCreateFile(f); };
-  $("#create-url").addEventListener("input", (e) => {
-    const url = e.target.value.trim();
-    if (!url) { state.createFile = null; $("#create-preview").classList.add("hidden"); return; }
-    state.createFile = null;
-    const preview = $("#create-preview");
-    preview.innerHTML = /^https?:\/\/.+/i.test(url)
-      ? `<img src="${esc(url)}" alt="Preview" onerror="this.parentElement.classList.add('hidden')">`
-      : "";
-    preview.classList.toggle("hidden", !/^https?:\/\/.+/i.test(url));
+  $$(".create-tab").forEach((tab) => (tab.onclick = () => openCreate(tab.dataset.kind)));
+  $("#create-file").onchange = (e) => {
+    const f = e.target.files?.[0];
+    if (f) setCreateFile(f);
+  };
+  $("#create-caption").addEventListener("input", (e) => {
+    $("#create-count").textContent = `${e.target.value.length}/2200`;
   });
-  $("#create-caption").addEventListener("input", (e) => { $("#create-count").textContent = `${e.target.value.length}/2200`; });
-  $("#create-camera-btn").onclick = startCreateCamera;
-  $("#create-capture-photo").onclick = captureCreatePhoto;
-  $("#create-record-video").onclick = toggleRecordVideo;
-  $("#create-camera-stop").onclick = stopCreateCamera;
   $("#create-form").onsubmit = async (e) => {
     e.preventDefault();
     if (!state.user) return nav("#/login");
     const content = $("#create-caption").value.trim();
-    const url = $("#create-url").value.trim();
-    if (!content && !state.createFile && !url) return toast("Add a caption or media", true);
-    if (state.createKind === "story" && !state.createFile && !url) return toast("Stories need a photo or video", true);
+    if (!content && !state.createFile) return toast("Add text or upload a file", true);
+    if ((state.createKind === "story" || state.createKind === "reel") && !state.createFile) {
+      return toast(`Upload an image or video file for your ${state.createKind}`, true);
+    }
     const btn = $("#create-share");
     btn.disabled = true;
     try {
@@ -341,13 +422,15 @@ function bindCreate() {
       fd.append(isStory ? "caption" : "content", content);
       if (!isStory) fd.append("kind", state.createKind);
       if (state.createFile) fd.append("media", state.createFile);
-      else if (url) fd.append("image_url", url);
       await api(isStory ? "/api/stories" : "/api/posts", { method: "POST", body: fd });
       closeModal("create-modal");
-      toast(isStory ? "Story added" : state.createKind === "reel" ? "Reel shared" : "Post shared");
+      toast(isStory ? "Story added" : state.createKind === "reel" ? "Reel shared" : "Thread posted");
       refresh();
-    } catch (err) { toast(err.message, true); }
-    finally { btn.disabled = false; }
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
   };
 }
 
@@ -358,19 +441,34 @@ async function loadStories() {
   try {
     const { stories } = await api("/api/stories");
     state.storyGroups = stories;
-    const add = state.user ? `<div class="story story-add" data-add-story><div class="story-ring"><div class="story-ring-inner">+</div></div><span class="story-name">Your story</span></div>` : "";
-    bar.innerHTML = add + stories.map((g, i) => `
+    const add = state.user
+      ? `<div class="story story-add" data-add-story><div class="story-ring"><div class="story-ring-inner">+</div></div><span class="story-name">Your story</span></div>`
+      : "";
+    bar.innerHTML =
+      add +
+      stories
+        .map(
+          (g, i) => `
       <div class="story" data-story-group="${i}">
-        <div class="story-ring ${g.seen ? "seen" : ""}"><div class="story-ring-inner">${g.user.avatar_url ? `<img src="${esc(g.user.avatar_url)}" alt="">` : esc(g.user.username[0].toUpperCase())}</div></div>
+        <div class="story-ring ${g.seen ? "seen" : ""}"><div class="story-ring-inner">${
+            g.user.avatar_url ? `<img src="${esc(g.user.avatar_url)}" alt="">` : esc(g.user.username[0].toUpperCase())
+          }</div></div>
         <span class="story-name">${esc(g.user.username)}</span>
-      </div>`).join("");
-    bar.classList.remove("hidden");
+      </div>`
+        )
+        .join("");
+    bar.classList.toggle("hidden", !state.user && !stories.length);
     bar.querySelector("[data-add-story]")?.addEventListener("click", () => openCreate("story"));
-    $$("[data-story-group]", bar).forEach((el) => el.onclick = () => openStoryViewer(Number(el.dataset.storyGroup), 0));
-  } catch { bar.classList.add("hidden"); }
+    $$("[data-story-group]", bar).forEach((el) => (el.onclick = () => openStoryViewer(Number(el.dataset.storyGroup), 0)));
+  } catch {
+    bar.classList.add("hidden");
+  }
 }
 
-function clearStoryTimer() { clearTimeout(state.storyTimer); state.storyTimer = null; }
+function clearStoryTimer() {
+  clearTimeout(state.storyTimer);
+  state.storyTimer = null;
+}
 
 function openStoryViewer(groupIdx, storyIdx = 0) {
   state.storyGroupIndex = groupIdx;
@@ -384,20 +482,38 @@ function renderStory() {
   const group = state.storyGroups[state.storyGroupIndex];
   const story = group?.stories[state.storyIndex];
   if (!story) {
-    if (state.storyGroupIndex < state.storyGroups.length - 1) { state.storyGroupIndex++; state.storyIndex = 0; return renderStory(); }
+    if (state.storyGroupIndex < state.storyGroups.length - 1) {
+      state.storyGroupIndex++;
+      state.storyIndex = 0;
+      return renderStory();
+    }
     return closeModal("story-modal");
   }
+  const head = $("#story-header");
+  if (head) {
+    head.innerHTML = `${avatarHTML(group.user, "avatar xs")}<span>${esc(group.user.username)}</span><span class="muted small">${esc(fmtDate(story.created_at))}</span>`;
+  }
   const stage = $("#story-stage");
-  stage.innerHTML = story.media_type === "video"
-    ? `<video src="${esc(story.media_url)}" autoplay playsinline controls></video>`
-    : `<img src="${esc(story.media_url)}" alt="Story">`;
-  $("#story-progress").innerHTML = group.stories.map((_, i) => `<div class="story-bar ${i <= state.storyIndex ? "active" : ""}"></div>`).join("");
+  stage.innerHTML =
+    story.media_type === "video"
+      ? `<video src="${esc(story.media_url)}" autoplay playsinline controls></video>`
+      : `<img src="${esc(story.media_url)}" alt="Story">`;
+  $("#story-progress").innerHTML = group.stories
+    .map((_, i) => `<div class="story-bar ${i <= state.storyIndex ? "active" : ""}"></div>`)
+    .join("");
+  const sh = $("#story-header");
+  if (sh) sh.innerHTML = `${avatarHTML(group.user, "avatar xs")}<span>${esc(group.user.username)}</span><span class="muted small">${esc(fmtDate(story.created_at))}</span>`;
   $("#story-caption").textContent = story.caption || `@${group.user.username}`;
   $("#story-views").textContent = `Views ${story.views}`;
   $("#story-delete").classList.toggle("hidden", group.user.id !== state.user?.id);
   $("#story-delete").onclick = async () => {
-    try { await api(`/api/stories/${story.id}`, { method: "DELETE" }); closeModal("story-modal"); refresh(); }
-    catch (e) { toast(e.message, true); }
+    try {
+      await api(`/api/stories/${story.id}`, { method: "DELETE" });
+      closeModal("story-modal");
+      refresh();
+    } catch (e) {
+      toast(e.message, true);
+    }
   };
   api(`/api/stories/${story.id}/view`, { method: "POST" }).catch(() => {});
   state.storyTimer = setTimeout(nextStory, 5000);
@@ -407,69 +523,84 @@ function nextStory() {
   const group = state.storyGroups[state.storyGroupIndex];
   if (!group) return closeModal("story-modal");
   if (state.storyIndex < group.stories.length - 1) state.storyIndex++;
-  else if (state.storyGroupIndex < state.storyGroups.length - 1) { state.storyGroupIndex++; state.storyIndex = 0; }
-  else return closeModal("story-modal");
-  renderStory();
-}
-function prevStory() {
-  const group = state.storyGroups[state.storyGroupIndex];
-  if (state.storyIndex > 0) state.storyIndex--;
-  else if (state.storyGroupIndex > 0) { state.storyGroupIndex--; state.storyIndex = state.storyGroups[state.storyGroupIndex].stories.length - 1; }
+  else if (state.storyGroupIndex < state.storyGroups.length - 1) {
+    state.storyGroupIndex++;
+    state.storyIndex = 0;
+  } else return closeModal("story-modal");
   renderStory();
 }
 
-// ── Comments ──────────────────────────────────────────────────────────────
-function bindCommentForm(form, postId) {
+function prevStory() {
+  if (state.storyIndex > 0) state.storyIndex--;
+  else if (state.storyGroupIndex > 0) {
+    state.storyGroupIndex--;
+    state.storyIndex = state.storyGroups[state.storyGroupIndex].stories.length - 1;
+  }
+  renderStory();
+}
+
+// ── Comments & In-place Post Updates ──────────────────────────────────────
+function renderRichText(text = "") {
+  return esc(text)
+    .replace(/#([A-Za-z0-9_]{1,30})/g, '<button type="button" class="inline-tag" data-tag="$1">#$1</button>')
+    .replace(/@([A-Za-z0-9_]{3,20})/g, '<a class="inline-mention" href="#/profile/$1">@$1</a>');
+}
+
+function bindRichLinks(root) {
+  $$(".inline-tag", root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); searchFor(`#${b.dataset.tag}`); }));
+}
+
+function replacePostElement(art, post, forceExpand) {
+  if (!art || !post) return refresh();
+  const wasOpen = forceExpand ?? !art.querySelector(".post-comments-drawer")?.classList.contains("hidden");
+  const nextEl = renderPost(post, { expandComments: wasOpen });
+  art.replaceWith(nextEl);
+  return nextEl;
+}
+
+function bindCommentForm(form, postId, art) {
   const input = form.querySelector('input[name="comment"]');
   const submit = form.querySelector(".comment-submit");
   const fileInput = form.querySelector('input[name="image_file"]');
-  const camBtn = form.querySelector(".comment-cam-btn");
   const tools = form.querySelector(".comment-tools");
-  const camBox = form.querySelector(".camera-box");
-  const video = camBox.querySelector("video");
-  const captureBtn = form.querySelector(".comment-capture");
-  const camClose = form.querySelector(".comment-cam-close");
   const preview = form.querySelector(".comment-preview");
   let file = null;
-  let stream = null;
   let previewUrl = null;
 
-  const syncTools = () => tools.classList.toggle("hidden", !(file || !camBox.classList.contains("hidden")));
-  const update = () => { submit.disabled = !(input.value.trim() || file); };
+  const syncTools = () => tools.classList.toggle("hidden", !file);
+  const update = () => {
+    submit.disabled = !(input.value.trim() || file);
+  };
   const setPreview = (f) => {
     file = f;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = null;
-    if (!f) { preview.classList.add("hidden"); preview.innerHTML = ""; syncTools(); update(); return; }
+    if (!f) {
+      preview.classList.add("hidden");
+      preview.innerHTML = "";
+      syncTools();
+      update();
+      return;
+    }
     previewUrl = URL.createObjectURL(f);
     const isVideo = f.type.startsWith("video/");
     preview.classList.remove("hidden");
-    preview.innerHTML = `${isVideo ? `<video src="${previewUrl}" controls></video>` : `<img src="${previewUrl}" alt="Preview">`}
-      <button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
-    preview.querySelector(".remove-media").onclick = () => { fileInput.value = ""; setPreview(null); };
-    syncTools(); update();
+    preview.innerHTML = `${
+      isVideo ? `<video src="${previewUrl}" controls></video>` : `<img src="${previewUrl}" alt="Preview">`
+    }<button type="button" class="remove-media" aria-label="Remove">&times;</button>`;
+    preview.querySelector(".remove-media").onclick = () => {
+      fileInput.value = "";
+      setPreview(null);
+    };
+    syncTools();
+    update();
   };
 
   input.addEventListener("input", update);
-  fileInput.addEventListener("change", () => { const f = fileInput.files?.[0]; if (f) setPreview(f); });
-  camBtn.onclick = async () => {
-    try {
-      stopMediaStream(stream);
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      video.srcObject = stream;
-      camBox.classList.remove("hidden");
-      syncTools();
-    } catch { toast("Camera unavailable. You can upload media instead.", true); }
-  };
-  const closeCam = () => { stopMediaStream(stream); stream = null; video.srcObject = null; camBox.classList.add("hidden"); syncTools(); };
-  camClose.onclick = closeCam;
-  captureBtn.onclick = () => {
-    if (!video.videoWidth) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    canvas.toBlob((blob) => { if (blob) { setPreview(new File([blob], `comment-camera-${Date.now()}.jpg`, { type: "image/jpeg" })); closeCam(); } }, "image/jpeg", 0.92);
-  };
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files?.[0];
+    if (f) setPreview(f);
+  });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const content = input.value.trim();
@@ -479,21 +610,25 @@ function bindCommentForm(form, postId) {
       const fd = new FormData();
       fd.append("content", content);
       if (file) fd.append("media", file);
-      await api(`/api/posts/${postId}/comments`, { method: "POST", body: fd });
-      input.value = ""; fileInput.value = "";
-      closeCam(); setPreview(null);
-      refresh();
-    } catch (err) { toast(err.message, true); update(); }
+      const res = await api(`/api/posts/${postId}/comments`, { method: "POST", body: fd });
+      input.value = "";
+      fileInput.value = "";
+      setPreview(null);
+      replacePostElement(art, res.post, true);
+    } catch (err) {
+      toast(err.message, true);
+      update();
+    }
   };
 }
 
 function searchFor(q) {
   const value = String(q || "").trim();
   if (!value) return;
-  $("#global-search").value = value;
   nav(`#/search/${encodeURIComponent(value)}`);
 }
 
+// ── Thread Post Rendering ─────────────────────────────────────────────────
 function renderPost(post, opts = {}) {
   const tpl = $("#post-template").content.cloneNode(true);
   const art = tpl.querySelector(".post");
@@ -501,21 +636,95 @@ function renderPost(post, opts = {}) {
   const authorUrl = `#/profile/${encodeURIComponent(post.author.username)}`;
 
   const av = tpl.querySelector(".post-avatar");
-  av.innerHTML = (post.author.avatar_url ? `<img src="${esc(post.author.avatar_url)}" alt="" onerror="this.remove()">` : "") + esc(post.author.username[0].toUpperCase());
+  av.innerHTML =
+    (post.author.avatar_url ? `<img src="${esc(post.author.avatar_url)}" alt="" onerror="this.remove()">` : "") +
+    esc((post.author.full_name || post.author.username)[0].toUpperCase());
   av.onclick = () => nav(authorUrl);
+
   const author = tpl.querySelector(".post-author");
-  author.textContent = post.author.username;
+  author.textContent = post.author.full_name || post.author.username;
   author.onclick = () => nav(authorUrl);
   tpl.querySelector(".post-time").textContent = fmtDate(post.created_at);
 
-  const more = tpl.querySelector(".post-more");
-  if (state.user && state.user.id === post.author.id) {
-    more.classList.remove("hidden");
-    more.onclick = async () => {
-      if (!confirm("Delete this post?")) return;
-      try { await api(`/api/posts/${post.id}`, { method: "DELETE" }); toast("Post deleted"); refresh(); }
-      catch (e) { toast(e.message, true); }
-    };
+  const isOwner = state.user && state.user.id === post.author.id;
+  const moreBtn = tpl.querySelector(".post-more");
+  const menuEl = tpl.querySelector(".post-menu");
+  const saveMenuBtn = menuEl.querySelector('[data-menu="save"]');
+  const editMenuBtn = menuEl.querySelector('[data-menu="edit"]');
+  const delMenuBtn = menuEl.querySelector('[data-menu="delete"]');
+  saveMenuBtn.textContent = post.saved ? "Unsave" : "Save";
+  if (isOwner) {
+    editMenuBtn.classList.remove("hidden");
+    delMenuBtn.classList.remove("hidden");
+  }
+  moreBtn.onclick = (e) => {
+    e.stopPropagation();
+    const willOpen = menuEl.classList.contains("hidden");
+    $$(".post-menu").forEach((m) => m.classList.add("hidden"));
+    if (willOpen) menuEl.classList.remove("hidden");
+  };
+  menuEl.querySelector('[data-menu="open"]').onclick = () => nav(`#/post/${post.id}`);
+  saveMenuBtn.onclick = () => {
+    menuEl.classList.add("hidden");
+    toggleSave(post, art);
+  };
+  menuEl.querySelector('[data-menu="copy"]').onclick = () => {
+    menuEl.classList.add("hidden");
+    const link = `${location.origin}/#/post/${post.id}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => toast("Link copied")).catch(() => toast(link));
+    else toast(link);
+  };
+
+  const captionBox = tpl.querySelector(".post-caption");
+  const contentEl = tpl.querySelector(".post-content");
+  const editForm = tpl.querySelector(".post-edit-box");
+  const editInput = editForm.querySelector('textarea[name="edit_content"]');
+  contentEl.innerHTML = renderRichText(post.content || "");
+  bindRichLinks(contentEl);
+  if (!post.content) captionBox.classList.add("hidden");
+
+  editMenuBtn.onclick = () => {
+    menuEl.classList.add("hidden");
+    editInput.value = post.content || "";
+    captionBox.classList.add("hidden");
+    editForm.classList.remove("hidden");
+    editInput.focus();
+  };
+  editForm.querySelector(".post-edit-cancel").onclick = () => {
+    editForm.classList.add("hidden");
+    if (post.content) captionBox.classList.remove("hidden");
+  };
+  editForm.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api(`/api/posts/${post.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content: editInput.value }),
+      });
+      toast("Thread updated");
+      replacePostElement(art, res.post);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+
+  delMenuBtn.onclick = async () => {
+    menuEl.classList.add("hidden");
+    if (!confirm("Delete this thread?")) return;
+    try {
+      await api(`/api/posts/${post.id}`, { method: "DELETE" });
+      toast("Thread deleted");
+      art.remove();
+      if (state.route.name === "post") nav("#/");
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  if (post.tags?.length) {
+    const tagsEl = tpl.querySelector(".post-tags");
+    tagsEl.innerHTML = post.tags.map((t) => `<button class="tag-link" type="button" data-tag="${esc(t)}">#${esc(t)}</button>`).join("");
+    $$(".tag-link", tagsEl).forEach((b) => (b.onclick = () => searchFor(`#${b.dataset.tag}`)));
   }
 
   const imgWrap = tpl.querySelector(".post-image-wrap");
@@ -534,116 +743,175 @@ function renderPost(post, opts = {}) {
       img.src = post.image_url;
       img.onerror = () => imgWrap.classList.add("hidden");
     }
-    imgWrap.ondblclick = () => { if (state.user && !post.liked) toggleLike(post); };
-  }
-
-  const captionAuthor = tpl.querySelector(".caption-author");
-  captionAuthor.textContent = post.author.username;
-  captionAuthor.onclick = () => nav(authorUrl);
-  tpl.querySelector(".post-content").textContent = post.content || "";
-  if (!post.content) tpl.querySelector(".post-caption").classList.add("hidden");
-
-  if (post.tags?.length) {
-    const tagsEl = tpl.querySelector(".post-tags");
-    tagsEl.innerHTML = post.tags.map((t) => `<button class="tag-link" data-tag="${esc(t)}">#${esc(t)}</button>`).join("");
-    $$(".tag-link", tagsEl).forEach((b) => b.onclick = () => searchFor(`#${b.dataset.tag}`));
+    imgWrap.ondblclick = () => {
+      if (state.user && !post.liked) toggleLike(post, art);
+    };
   }
 
   const likeBtn = tpl.querySelector(".like-btn");
   likeBtn.classList.toggle("liked", !!post.liked);
-  tpl.querySelector(".like-count").textContent = post.likes;
-  likeBtn.onclick = () => toggleLike(post);
+  likeBtn.onclick = () => toggleLike(post, art);
+
   const saveBtn = tpl.querySelector(".save-btn");
   saveBtn.classList.toggle("saved", !!post.saved);
-  saveBtn.onclick = () => toggleSave(post);
+  saveBtn.onclick = () => toggleSave(post, art);
+
   tpl.querySelector(".share-btn").onclick = () => {
     const link = `${location.origin}/#/post/${post.id}`;
     if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => toast("Link copied")).catch(() => toast(link));
     else toast(link);
   };
+
+  // Thread gutter mini avatars from replies
+  const miniWrap = tpl.querySelector(".thread-avatars");
+  const seenReplyUsers = [];
+  const replyAuthors = [];
+  for (const c of post.comments || []) {
+    if (!seenReplyUsers.includes(c.username)) {
+      seenReplyUsers.push(c.username);
+      replyAuthors.push(c);
+      if (replyAuthors.length >= 2) break;
+    }
+  }
+  if (replyAuthors.length) {
+    miniWrap.innerHTML = replyAuthors
+      .map(
+        (c) =>
+          `<span class="thread-mini-av">${
+            c.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="">` : esc(c.username[0].toUpperCase())
+          }</span>`
+      )
+      .join("");
+  }
+
+  // Engagement summary line
+  const replyCount = post.comments.length;
+  tpl.querySelector(".reply-count").textContent = `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`;
+  const likeSummaryEl = tpl.querySelector(".liked-summary");
+  if (post.liked && post.likes > 1) {
+    likeSummaryEl.innerHTML = `Liked by <strong>you</strong> and ${post.likes - 1} others`;
+  } else if (post.liked) {
+    likeSummaryEl.innerHTML = `Liked by <strong>you</strong>`;
+  } else {
+    likeSummaryEl.innerHTML = `<strong class="like-count">${post.likes}</strong> ${post.likes === 1 ? "like" : "likes"}`;
+  }
+
+  const drawer = tpl.querySelector(".post-comments-drawer");
+  if (opts.expandComments) drawer.classList.remove("hidden");
+
+  const toggleDrawer = (focusInput = false) => {
+    drawer.classList.toggle("hidden");
+    if (focusInput && !drawer.classList.contains("hidden")) {
+      drawer.querySelector('.comment-form input[name="comment"]')?.focus();
+    }
+  };
+  tpl.querySelector(".engagement-link").onclick = () => toggleDrawer(false);
   tpl.querySelector(".comment-focus-btn").onclick = () => {
-    const input = art.querySelector(".comment-form input");
-    if (input) input.focus(); else nav("#/login");
+    if (drawer.classList.contains("hidden")) drawer.classList.remove("hidden");
+    drawer.querySelector('.comment-form input[name="comment"]')?.focus();
   };
 
   const commentsWrap = tpl.querySelector(".comments");
-  const viewBtn = tpl.querySelector(".view-comments-btn");
-  const renderComments = (list, limit) => {
-    commentsWrap.innerHTML = "";
-    const shown = limit ? list.slice(-limit) : list;
-    shown.forEach((c) => {
-      const row = document.createElement("div");
-      row.className = "comment";
-      const canDel = state.user && (state.user.id === c.user_id || state.user.id === post.author.id);
-      row.innerHTML = `<div class="comment-body">
-          <strong data-u="${esc(c.username)}">${esc(c.username)}</strong>
-          ${c.content ? `<span class="comment-text">${esc(c.content)}</span>` : ""}
-          ${c.image_url ? (c.image_url.match(/\.(mp4|webm|mov)/i) ? `<video class="comment-image" src="${esc(c.image_url)}" controls></video>` : `<img class="comment-image" src="${esc(c.image_url)}" alt="Comment media" loading="lazy">`) : ""}
-          <button class="comment-like ${c.liked ? "liked" : ""}" data-clid="${c.id}" title="Like comment">♥ ${c.likes || 0}</button>
-        </div>${canDel ? `<button class="comment-del" data-cid="${c.id}" title="Delete">&times;</button>` : ""}`;
-      row.querySelector("strong").onclick = () => nav(`#/profile/${encodeURIComponent(c.username)}`);
-      row.querySelector(".comment-like").onclick = async () => {
-        if (!state.user) return nav("#/login");
-        try { await api(`/api/comments/${c.id}/like`, { method: c.liked ? "DELETE" : "POST" }); refresh(); }
-        catch (e) { toast(e.message, true); }
+  post.comments.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "comment";
+    const canDel = state.user && (state.user.id === c.user_id || state.user.id === post.author.id);
+    row.innerHTML = `<div class="comment-body">
+        <strong data-u="${esc(c.username)}">${esc(c.username)}</strong>
+        ${c.content ? `<span class="comment-text">${renderRichText(c.content)}</span>` : ""}
+        ${
+          c.image_url
+            ? c.image_url.match(/\.(mp4|webm|mov)/i)
+              ? `<video class="comment-image" src="${esc(c.image_url)}" controls></video>`
+              : `<img class="comment-image" src="${esc(c.image_url)}" alt="Comment media" loading="lazy">`
+            : ""
+        }
+        <button class="comment-like ${c.liked ? "liked" : ""}" data-clid="${c.id}" type="button" title="Like reply">♥ ${c.likes || 0}</button>
+      </div>${canDel ? `<button class="comment-del" data-cid="${c.id}" type="button" title="Delete">&times;</button>` : ""}`;
+    bindRichLinks(row);
+    row.querySelector("strong").onclick = () => nav(`#/profile/${encodeURIComponent(c.username)}`);
+    row.querySelector(".comment-like").onclick = async () => {
+      if (!state.user) return nav("#/login");
+      try {
+        const res = await api(`/api/comments/${c.id}/like`, { method: c.liked ? "DELETE" : "POST" });
+        replacePostElement(art, res.post, true);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+    const del = row.querySelector(".comment-del");
+    if (del) {
+      del.onclick = async () => {
+        try {
+          await api(`/api/comments/${c.id}`, { method: "DELETE" });
+          const res = await api(`/api/posts/${post.id}`);
+          replacePostElement(art, res.post, true);
+        } catch (e) {
+          toast(e.message, true);
+        }
       };
-      const del = row.querySelector(".comment-del");
-      if (del) del.onclick = async () => { try { await api(`/api/comments/${c.id}`, { method: "DELETE" }); refresh(); } catch (e) { toast(e.message, true); } };
-      commentsWrap.appendChild(row);
-    });
-  };
-  const limit = opts.expandComments ? 0 : 2;
-  if (post.comments.length > 2 && !opts.expandComments) {
-    viewBtn.classList.remove("hidden");
-    viewBtn.textContent = `View all ${post.comments.length} comments`;
-    viewBtn.onclick = () => { renderComments(post.comments, 0); viewBtn.classList.add("hidden"); };
-  }
-  renderComments(post.comments, limit);
+    }
+    commentsWrap.appendChild(row);
+  });
 
   const form = tpl.querySelector(".comment-form");
-  if (!state.user) {
-    form.innerHTML = `<button type="button" class="muted" style="font-size:14px;background:none;border:none;padding:0;cursor:pointer">Log in to comment</button>`;
-    form.querySelector("button").onclick = () => nav("#/login");
-  } else bindCommentForm(form, post.id);
-
+  bindCommentForm(form, post.id, art);
   return art;
 }
 
-async function toggleLike(post) {
-  if (!state.user) { toast("Log in to like posts", true); return nav("#/login"); }
-  try { await api(`/api/posts/${post.id}/like`, { method: post.liked ? "DELETE" : "POST" }); refresh(); }
-  catch (e) { toast(e.message, true); }
-}
-async function toggleSave(post) {
-  if (!state.user) { toast("Log in to save posts", true); return nav("#/login"); }
+async function toggleLike(post, art) {
+  if (!state.user) return nav("#/login");
   try {
-    await api(`/api/posts/${post.id}/save`, { method: post.saved ? "DELETE" : "POST" });
+    const res = await api(`/api/posts/${post.id}/like`, { method: post.liked ? "DELETE" : "POST" });
+    replacePostElement(art, res.post);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function toggleSave(post, art) {
+  if (!state.user) return nav("#/login");
+  try {
+    const res = await api(`/api/posts/${post.id}/save`, { method: post.saved ? "DELETE" : "POST" });
     toast(post.saved ? "Removed from saved" : "Saved");
-    refresh();
-  } catch (e) { toast(e.message, true); }
+    replacePostElement(art, res.post);
+    if (state.route.name === "saved" && post.saved) loadSaved();
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 function emptyState(icon, title, text) {
-  return `<div class="card empty-state"><div class="empty-icon">${icon}</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;
+  return `<div class="empty-state"><div class="empty-icon">${icon}</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;
 }
 
 async function loadFeed() {
   setActiveNav("feed");
+  if (!state.user) {
+    showView("auth");
+    return;
+  }
   $("#view-feed").classList.remove("hidden");
   const list = $("#feed-list");
-  list.innerHTML = `<div class="card empty-state"><p class="muted">Loading...</p></div>`;
-  loadStories(); renderSuggestions();
+  list.innerHTML = `<div class="empty-state"><p class="muted">Loading threads...</p></div>`;
+  loadStories();
+  renderSuggestions();
+  renderTrending();
   try {
     const { posts } = await api(`/api/posts?feed=${state.feedMode}`);
     list.innerHTML = "";
     if (!posts.length) {
-      list.innerHTML = emptyState(`<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`,
-        state.feedMode === "following" ? "No posts yet" : "Share your first photo",
-        state.feedMode === "following" ? "Follow people to see their posts here." : "Use the + button to create a post, reel or story.");
+      list.innerHTML = emptyState(
+        `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>`,
+        state.feedMode === "following" ? "No threads yet" : "Start the conversation",
+        state.feedMode === "following" ? "Follow people to see their threads here." : "Write your first thread above or attach a photo."
+      );
       return;
     }
     posts.forEach((p) => list.appendChild(renderPost(p)));
-  } catch (e) { list.innerHTML = emptyState("!", "Couldn't load feed", e.message); }
+  } catch (e) {
+    list.innerHTML = emptyState("!", "Couldn't load feed", e.message);
+  }
 }
 
 async function loadExplore(tag) {
@@ -658,23 +926,39 @@ async function loadExplore(tag) {
       api("/api/tags/trending"),
     ]);
     tagsEl.innerHTML = tagRes.tags.length
-      ? `<button class="tag-pill ${!tag ? "active" : ""}" data-tag="">All</button>` + tagRes.tags.map((t) => `<button class="tag-pill ${tag === t.tag ? "active" : ""}" data-tag="${esc(t.tag)}">#${esc(t.tag)} · ${t.posts}</button>`).join("")
+      ? `<button class="tag-pill ${!tag ? "active" : ""}" data-tag="" type="button">All</button>` +
+        tagRes.tags
+          .map((t) => `<button class="tag-pill ${tag === t.tag ? "active" : ""}" data-tag="${esc(t.tag)}" type="button">#${esc(t.tag)} · ${t.posts}</button>`)
+          .join("")
       : "";
-    $$(".tag-pill", tagsEl).forEach((b) => b.onclick = () => nav(b.dataset.tag ? `#/explore/${encodeURIComponent(b.dataset.tag)}` : "#/explore"));
-    if (!postRes.posts.length) { grid.innerHTML = emptyState("", "No posts to explore", "Posts from the community will show up here."); return; }
-    grid.innerHTML = postRes.posts.map((p) => `
+    $$(".tag-pill", tagsEl).forEach((b) => (b.onclick = () => nav(b.dataset.tag ? `#/explore/${encodeURIComponent(b.dataset.tag)}` : "#/explore")));
+    if (!postRes.posts.length) {
+      grid.innerHTML = emptyState("", "No threads to explore", "Threads from the community will show up here.");
+      return;
+    }
+    grid.innerHTML = postRes.posts
+      .map(
+        (p) => `
       <article class="explore-card" data-post="${p.id}">
-        <div class="explore-media">${p.image_url
-          ? (p.media_type === "video" ? `<video src="${esc(p.image_url)}" muted playsinline></video>` : `<img src="${esc(p.image_url)}" alt="" loading="lazy">`)
-          : `<div class="explore-no-media">${esc((p.content || "Post").slice(0, 80))}</div>`}</div>
+        <div class="explore-media">${
+          p.image_url
+            ? p.media_type === "video"
+              ? `<video src="${esc(p.image_url)}" muted playsinline></video>`
+              : `<img src="${esc(p.image_url)}" alt="" loading="lazy">`
+            : `<div class="explore-no-media">${esc((p.content || "Thread").slice(0, 80))}</div>`
+        }</div>
         <div class="explore-body">
-          <div class="explore-author"><span class="avatar xs">${p.author.avatar_url ? `<img src="${esc(p.author.avatar_url)}" alt="">` : esc(p.author.username[0].toUpperCase())}</span><strong>${esc(p.author.username)}</strong></div>
-          <p class="explore-text">${esc(p.content || "Shared a post")}</p>
+          <div class="explore-author">${avatarHTML(p.author, "avatar xs")}<strong>${esc(p.author.username)}</strong></div>
+          <p class="explore-text">${esc(p.content || "Shared media")}</p>
           <div class="explore-meta muted"><span>♥ ${p.likes}</span><span>💬 ${p.comments.length}</span><span>${esc(fmtDate(p.created_at))}</span></div>
         </div>
-      </article>`).join("");
-    $$(".explore-card", grid).forEach((el) => el.onclick = () => nav(`#/post/${el.dataset.post}`));
-  } catch (e) { grid.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+      </article>`
+      )
+      .join("");
+    $$(".explore-card", grid).forEach((el) => (el.onclick = () => nav(`#/post/${el.dataset.post}`)));
+  } catch (e) {
+    grid.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 async function loadReels() {
@@ -684,10 +968,15 @@ async function loadReels() {
   list.innerHTML = `<p class="muted">Loading...</p>`;
   try {
     const { posts } = await api("/api/reels");
-    if (!posts.length) { list.innerHTML = emptyState("", "No reels yet", "Use + → Reel to share a short video."); return; }
+    if (!posts.length) {
+      list.innerHTML = emptyState("", "No reels yet", "Create a Reel to share a short video.");
+      return;
+    }
     list.innerHTML = "";
     posts.forEach((p) => list.appendChild(renderPost(p, { expandComments: false })));
-  } catch (e) { list.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+  } catch (e) {
+    list.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 async function loadSaved() {
@@ -699,9 +988,14 @@ async function loadSaved() {
   try {
     const { posts } = await api("/api/posts/saved");
     list.innerHTML = "";
-    if (!posts.length) { list.innerHTML = emptyState(`<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 4h12a1 1 0 011 1v16l-7-4-7 4V5a1 1 0 011-1z"/></svg>`, "Save posts for later", "Bookmark posts you want to see again."); return; }
+    if (!posts.length) {
+      list.innerHTML = emptyState("", "No saved threads", "Save threads to revisit them here.");
+      return;
+    }
     posts.forEach((p) => list.appendChild(renderPost(p)));
-  } catch (e) { list.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+  } catch (e) {
+    list.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 async function loadPost(id) {
@@ -711,7 +1005,9 @@ async function loadPost(id) {
     const { post } = await api(`/api/posts/${encodeURIComponent(id)}`);
     el.innerHTML = "";
     el.appendChild(renderPost(post, { expandComments: true }));
-  } catch (e) { el.innerHTML = emptyState("", "Post not found", e.message); }
+  } catch (e) {
+    el.innerHTML = emptyState("", "Thread not found", e.message);
+  }
 }
 
 async function loadProfile(username, tab = state.profileTab) {
@@ -722,63 +1018,94 @@ async function loadProfile(username, tab = state.profileTab) {
   $("#view-profile").classList.remove("hidden");
   const hero = $("#profile-hero");
   const postsEl = $("#profile-posts");
-  hero.innerHTML = `<div class="profile-main" style="padding:40px;text-align:center;color:var(--muted)">Loading...</div>`;
+  hero.innerHTML = `<div style="padding:30px;text-align:center" class="muted">Loading...</div>`;
   postsEl.innerHTML = "";
   try {
     const { user: u } = await api(`/api/users/${encodeURIComponent(target)}`);
     let endpoint = `/api/users/${encodeURIComponent(target)}/posts`;
     if (tab === "reels") endpoint = `/api/users/${encodeURIComponent(target)}/reels`;
     if (tab === "saved") endpoint = "/api/posts/saved";
-    const { posts } = tab === "saved" && !u.isMe ? { posts: [] } : await api(endpoint);
+    const data = tab === "saved" && !u.isMe ? { posts: [], privateLocked: false } : await api(endpoint);
+    const posts = data.posts || [];
+    const privateLocked = !!data.privateLocked;
     const canFollow = state.user && !u.isMe;
     hero.innerHTML = `
-      <div class="profile-cover"></div>
-      <div class="profile-main">
-        <div class="profile-row">
-          <div class="profile-avatar-lg">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="" onerror="this.remove()">` : esc(u.username[0].toUpperCase())}</div>
-          <div class="profile-identity">
-            <div class="profile-top-line">
-              <h1 class="profile-username">${esc(u.username)}</h1>
-              ${u.isPrivate ? '<span class="muted" style="font-size:13px">🔒 Private</span>' : ""}
-              ${u.isMe ? `<button class="btn ghost small" id="edit-profile-btn">Edit profile</button>` : ""}
-              ${canFollow ? `<button class="btn ${u.isFollowing || u.isRequested ? "ghost" : "primary"} small" id="follow-btn">${u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow"}</button>` : ""}
-              ${!state.user && !u.isMe ? `<a class="btn primary small" href="#/login">Log in to follow</a>` : ""}
-              ${u.isMe && u.isPrivate ? `<button class="btn ghost small" id="requests-btn">Requests</button>` : ""}
-            </div>
-            <div class="profile-stats">
-              <span><strong>${u.postsCount + u.reelsCount}</strong> posts</span>
-              <button id="stat-followers"><strong>${u.followers}</strong> followers</button>
-              <button id="stat-following"><strong>${u.following}</strong> following</button>
-            </div>
-            <div class="profile-meta muted">${esc(u.full_name || "")}${u.full_name && u.website ? " · " : ""}${u.website ? `<a href="${esc(u.website)}" target="_blank" rel="noopener">${esc(u.website)}</a>` : ""}${u.isMe && u.phone ? ` · ${esc(u.phone)}` : ""}</div>
-            <div class="profile-bio">${esc(u.bio || (u.isMe ? "Add a bio to tell people about yourself." : ""))}</div>
+      <div class="profile-row">
+        <div class="profile-avatar-lg">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="" onerror="this.remove()">` : esc((u.full_name || u.username)[0].toUpperCase())}</div>
+        <div class="profile-identity">
+          <div class="profile-top-line">
+            <h1 class="profile-username">${esc(u.full_name || u.username)}</h1>
+            <span class="muted small">@${esc(u.username)}</span>
+            ${u.isPrivate ? '<span class="muted small">🔒 Private</span>' : ""}
+            ${u.isMe ? `<button class="glass-btn small" id="edit-profile-btn" type="button">Edit profile</button>` : ""}
+            ${u.isMe && u.isPrivate ? `<button class="glass-btn small" id="requests-btn" type="button">Requests</button>` : ""}
+            ${u.isMe ? `<button class="glass-btn small" id="profile-logout-btn" type="button">Log out</button>` : ""}
+            ${
+              canFollow
+                ? `<button class="glass-btn ${u.isFollowing || u.isRequested ? "" : "primary"} small" id="follow-btn" type="button">${
+                    u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow"
+                  }</button>
+                  <button class="glass-btn small" id="message-user-btn" type="button">Message</button>`
+                : ""
+            }
           </div>
+          <div class="profile-stats">
+            <span><strong>${u.postsCount + u.reelsCount}</strong> threads</span>
+            <button id="stat-followers" type="button"><strong>${u.followers}</strong> followers</button>
+            <button id="stat-following" type="button"><strong>${u.following}</strong> following</button>
+          </div>
+          ${u.website ? `<div class="profile-meta"><a href="${esc(u.website)}" target="_blank" rel="noopener">${esc(u.website)}</a></div>` : ""}
+          <div class="profile-bio">${esc(u.bio || (u.isMe ? "Add a bio to tell people about yourself." : ""))}</div>
         </div>
       </div>`;
     $$(".ptab").forEach((b) => b.classList.toggle("active", b.dataset.ptab === tab));
-    if (u.isMe) $("#edit-profile-btn").onclick = () => openEditProfile(u);
+    if (u.isMe) {
+      $("#edit-profile-btn").onclick = () => openEditProfile(u);
+      $("#profile-logout-btn").onclick = logoutUser;
+    }
     if (u.isMe && u.isPrivate) $("#requests-btn").onclick = () => showFollowRequests();
+    const msgBtn = $("#message-user-btn");
+    if (msgBtn) msgBtn.onclick = () => startMessageWith(u.username);
     const followBtn = $("#follow-btn");
-    if (followBtn) followBtn.onclick = async () => {
-      followBtn.disabled = true;
-      try {
-        const isActive = u.isFollowing || u.isRequested;
-        const res = await api(`/api/users/${encodeURIComponent(u.username)}/follow`, { method: isActive ? "DELETE" : "POST" });
-        const next = res.user;
-        u.isFollowing = next.isFollowing; u.isRequested = next.isRequested;
-        followBtn.textContent = next.isRequested ? "Requested" : next.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow";
-        followBtn.classList.toggle("ghost", !!(next.isFollowing || next.isRequested));
-        followBtn.classList.toggle("primary", !(next.isFollowing || next.isRequested));
-      } catch (e) { toast(e.message, true); }
-      finally { followBtn.disabled = false; }
-    };
+    if (followBtn) {
+      followBtn.onclick = async () => {
+        followBtn.disabled = true;
+        try {
+          const isActive = u.isFollowing || u.isRequested;
+          const res = await api(`/api/users/${encodeURIComponent(u.username)}/follow`, {
+            method: isActive ? "DELETE" : "POST",
+          });
+          const next = res.user;
+          u.isFollowing = next.isFollowing;
+          u.isRequested = next.isRequested;
+          followBtn.textContent = next.isRequested ? "Requested" : next.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow";
+          followBtn.classList.toggle("primary", !(next.isFollowing || next.isRequested));
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          followBtn.disabled = false;
+        }
+      };
+    }
     $("#stat-followers").onclick = () => showUserList(u.username, "followers");
     $("#stat-following").onclick = () => showUserList(u.username, "following");
 
-    if (!posts.length) {
-      postsEl.innerHTML = emptyState("", `No ${tab} yet`, tab === "reels" ? "Reels will appear here." : tab === "saved" ? "Save posts to see them here." : `When ${u.username} posts, you'll see it here.`);
+    if (privateLocked) {
+      postsEl.innerHTML = emptyState(
+        "🔒",
+        "This account is private",
+        `Follow @${u.username} to see their threads and reels.`
+      );
+    } else if (!posts.length) {
+      postsEl.innerHTML = emptyState(
+        "",
+        `No ${tab} yet`,
+        tab === "reels" ? "Reels will appear here." : tab === "saved" ? "Saved threads appear here." : `No threads from ${u.username} yet.`
+      );
     } else posts.forEach((p) => postsEl.appendChild(renderPost(p)));
-  } catch (e) { hero.innerHTML = emptyState("", "Profile not found", e.message); }
+  } catch (e) {
+    hero.innerHTML = emptyState("", "Profile not found", e.message);
+  }
 }
 
 function openEditProfile(u) {
@@ -791,7 +1118,6 @@ function openEditProfile(u) {
   form.bio.value = u.bio || "";
   form.website.value = u.website || "";
   form.phone.value = u.phone || "";
-  form.avatar_url.value = u.avatar_url.startsWith("/uploads/") ? "" : u.avatar_url || "";
   form.avatar_file.value = "";
   form.is_private.checked = !!u.isPrivate;
   form.onsubmit = async (e) => {
@@ -806,13 +1132,16 @@ function openEditProfile(u) {
       fd.append("phone", form.phone.value);
       fd.append("is_private", form.is_private.checked ? "true" : "false");
       if (form.avatar_file.files?.[0]) fd.append("avatar_url", form.avatar_file.files[0]);
-      else fd.append("avatar_url", form.avatar_url.value);
       await api("/api/users/me", { method: "PATCH", body: fd });
       closeModal("modal");
       toast("Profile updated");
-      await loadMe(); refresh();
-    } catch (err) { toast(err.message, true); }
-    finally { btn.disabled = false; }
+      await loadMe();
+      refresh();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
   };
 }
 
@@ -822,13 +1151,28 @@ async function showUserList(username, type) {
   $("#edit-profile-form").classList.add("hidden");
   $("#modal .modal-head h3").textContent = type === "followers" ? "Followers" : "Following";
   let body = modal.querySelector(".modal-body-list");
-  if (!body) { body = document.createElement("div"); body.className = "modal-body-list"; modal.querySelector(".modal-card").appendChild(body); }
+  if (!body) {
+    body = document.createElement("div");
+    body.className = "modal-body-list";
+    modal.querySelector(".modal-card").appendChild(body);
+  }
   body.innerHTML = `<p class="muted">Loading...</p>`;
   try {
     const { users } = await api(`/api/users/${encodeURIComponent(username)}/${type}`);
-    body.innerHTML = users.length ? users.map((u) => `<div class="suggest-row" style="padding:6px 0">${avatarHTML(u, "avatar xs")}<div class="s-info"><span class="s-name" data-u="${esc(u.username)}">${esc(u.username)}</span><span class="s-sub">${esc(u.full_name || u.bio || "")}</span></div></div>`).join("") : `<p class="muted">No ${type} yet.</p>`;
-    $$("[data-u]", body).forEach((n) => n.onclick = () => { closeModal("modal"); nav(`#/profile/${encodeURIComponent(n.dataset.u)}`); });
-  } catch (e) { body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+    body.innerHTML = users.length
+      ? users
+          .map(
+            (u) =>
+              `<div class="suggest-row" style="padding:7px 0">${avatarHTML(u, "avatar xs")}<div class="s-info"><span class="s-name" data-u="${esc(
+                u.username
+              )}">${esc(u.full_name || u.username)}</span></div><span class="muted small">@${esc(u.username)}</span></div>`
+          )
+          .join("")
+      : `<p class="muted">No ${type} yet.</p>`;
+    $$("[data-u]", body).forEach((n) => (n.onclick = () => { closeModal("modal"); nav(`#/profile/${encodeURIComponent(n.dataset.u)}`); }));
+  } catch (e) {
+    body.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 async function showFollowRequests() {
@@ -837,15 +1181,33 @@ async function showFollowRequests() {
   $("#edit-profile-form").classList.add("hidden");
   $("#modal .modal-head h3").textContent = "Follow requests";
   let body = modal.querySelector(".modal-body-list");
-  if (!body) { body = document.createElement("div"); body.className = "modal-body-list"; modal.querySelector(".modal-card").appendChild(body); }
+  if (!body) {
+    body = document.createElement("div");
+    body.className = "modal-body-list";
+    modal.querySelector(".modal-card").appendChild(body);
+  }
   body.innerHTML = `<p class="muted">Loading...</p>`;
   try {
     const { users } = await api("/api/users/me/follow-requests");
-    if (!users.length) { body.innerHTML = `<p class="muted">No pending requests.</p>`; return; }
-    body.innerHTML = users.map((u) => `<div class="suggest-row" style="padding:6px 0">${avatarHTML(u, "avatar xs")}<div class="s-info"><span class="s-name" data-u="${esc(u.username)}">${esc(u.username)}</span><span class="s-sub">${esc(u.full_name || "")}</span></div><button class="btn-text" data-accept="${esc(u.username)}">Accept</button><button class="btn-text danger" data-decline="${esc(u.username)}">Decline</button></div>`).join("");
-    $$("[data-accept]", body).forEach((b) => b.onclick = async () => { await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.accept)}/accept`, { method: "POST" }); showFollowRequests(); refresh(); });
-    $$("[data-decline]", body).forEach((b) => b.onclick = async () => { await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.decline)}`, { method: "DELETE" }); showFollowRequests(); });
-  } catch (e) { body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+    if (!users.length) {
+      body.innerHTML = `<p class="muted">No pending requests.</p>`;
+      return;
+    }
+    body.innerHTML = users
+      .map(
+        (u) =>
+          `<div class="suggest-row" style="padding:7px 0">${avatarHTML(u, "avatar xs")}<div class="s-info"><span class="s-name" data-u="${esc(
+            u.username
+          )}">${esc(u.username)}</span></div><button class="btn-text" data-accept="${esc(u.username)}" type="button">Accept</button><button class="btn-text danger" data-decline="${esc(
+            u.username
+          )}" type="button">Decline</button></div>`
+      )
+      .join("");
+    $$("[data-accept]", body).forEach((b) => (b.onclick = async () => { await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.accept)}/accept`, { method: "POST" }); showFollowRequests(); refresh(); }));
+    $$("[data-decline]", body).forEach((b) => (b.onclick = async () => { await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.decline)}`, { method: "DELETE" }); showFollowRequests(); }));
+  } catch (e) {
+    body.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────
@@ -857,20 +1219,31 @@ async function loadMessages(username) {
   list.innerHTML = `<p class="muted" style="padding:12px">Loading...</p>`;
   try {
     const { conversations } = await api("/api/messages/conversations");
-    list.innerHTML = conversations.length ? conversations.map((c) => `
+    list.innerHTML = conversations.length
+      ? conversations
+          .map(
+            (c) => `
       <div class="conversation ${state.conversation === c.user.username ? "active" : ""}" data-user="${esc(c.user.username)}">
         ${avatarHTML(c.user, "avatar sm")}
         <div class="c-info">
           <span class="c-name">${esc(c.user.full_name || c.user.username)}</span>
-          <span class="c-last">${esc(c.last_message ? (c.last_message.body || "📎 Media") : "No messages yet")}</span>
+          <span class="c-last">${esc(c.last_message ? c.last_message.body || "📎 Media" : "No messages yet")}</span>
         </div>
         ${c.unread ? '<span class="unread-dot"></span>' : ""}
-      </div>`).join("") : `<p class="muted" style="padding:12px">No conversations yet. Search for someone and message them from their profile.</p>`;
-    $$(".conversation", list).forEach((el) => el.onclick = () => nav(`#/messages/${encodeURIComponent(el.dataset.user)}`));
+      </div>`
+          )
+          .join("")
+      : `<p class="muted small" style="padding:14px">No conversations yet. Visit someone's profile to start a chat.</p>`;
+    $$(".conversation", list).forEach((el) => (el.onclick = () => nav(`#/messages/${encodeURIComponent(el.dataset.user)}`)));
     const target = username || state.conversation || conversations[0]?.user.username;
     if (target) await openConversation(target);
-    else { $("#chat-panel").innerHTML = `<div class="chat-empty muted">Select a conversation to start chatting.</div>`; $("#message-form").classList.add("hidden"); }
-  } catch (e) { list.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+    else {
+      $("#chat-panel").innerHTML = `<div class="chat-empty muted">Select a conversation to start chatting.</div>`;
+      $("#message-form").classList.add("hidden");
+    }
+  } catch (e) {
+    list.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 async function openConversation(username) {
@@ -880,29 +1253,91 @@ async function openConversation(username) {
     state.messages = messages;
     $$(".conversation").forEach((el) => el.classList.toggle("active", el.dataset.user === username));
     const panel = $("#chat-panel");
-    panel.innerHTML = `<div class="chat-head">${avatarHTML(user, "avatar sm")}<strong>${esc(user.full_name || user.username)}</strong><button class="btn-text" id="chat-profile-btn">Profile</button></div>
+    panel.innerHTML = `<div class="chat-head">${avatarHTML(user, "avatar sm")}<strong>${esc(
+      user.full_name || user.username
+    )}</strong><button class="btn-text" id="chat-profile-btn" type="button">Profile</button></div>
       <div id="chat-messages"></div>`;
     $("#chat-profile-btn").onclick = () => nav(`#/profile/${encodeURIComponent(user.username)}`);
     renderMessages();
     $("#message-form").classList.remove("hidden");
     renderBadges();
-    setTimeout(() => { panel.scrollTop = panel.scrollHeight; }, 60);
-  } catch (e) { toast(e.message, true); }
+    setTimeout(() => {
+      panel.scrollTop = panel.scrollHeight;
+    }, 60);
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 function renderMessages() {
   const el = $("#chat-messages");
   if (!el) return;
-  el.innerHTML = state.messages.map((m) => {
-    const mine = state.user && m.sender.id === state.user.id;
-    return `<div class="msg-row ${mine ? "mine" : ""}" data-id="${m.id}">
+  el.innerHTML = state.messages
+    .map((m) => {
+      const mine = state.user && m.sender.id === state.user.id;
+      return `<div class="msg-row ${mine ? "mine" : ""}" data-id="${m.id}">
+      ${mine ? `<button class="msg-del" data-del-msg="${m.id}" type="button" title="Delete message">&times;</button>` : ""}
       <div class="msg-bubble">
         ${m.body ? esc(m.body) : ""}
         ${m.image_url ? (/\.(mp4|webm|mov)/i.test(m.image_url) ? `<video src="${esc(m.image_url)}" controls></video>` : `<img src="${esc(m.image_url)}" alt="Attachment">`) : ""}
         <div class="msg-time">${esc(fmtDate(m.created_at))}${mine && m.read ? " · Seen" : ""}</div>
       </div>
     </div>`;
-  }).join("");
+    })
+    .join("");
+  $$("[data-del-msg]", el).forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await api(`/api/messages/${btn.dataset.delMsg}`, { method: "DELETE" });
+        state.messages = state.messages.filter((m) => String(m.id) !== String(btn.dataset.delMsg));
+        renderMessages();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  });
+}
+
+let dmSearchTimer;
+function bindDmSearch() {
+  const input = $("#dm-user-search");
+  const box = $("#dm-search-results");
+  if (!input || !box) return;
+  input.addEventListener("input", () => {
+    clearTimeout(dmSearchTimer);
+    const q = input.value.trim();
+    if (!q) {
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      return;
+    }
+    dmSearchTimer = setTimeout(async () => {
+      try {
+        const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
+        const filtered = users.filter((u) => !u.isMe);
+        box.innerHTML = filtered.length
+          ? filtered
+              .map(
+                (u) => `<button class="dm-search-item" data-dm-user="${esc(u.username)}" type="button">${avatarHTML(u, "avatar xs")}<span>${esc(u.full_name || u.username)}</span><span class="muted small">@${esc(u.username)}</span></button>`
+              )
+              .join("")
+          : `<div class="muted small" style="padding:8px 10px">No users found.</div>`;
+        $$("[data-dm-user]", box).forEach((b) => {
+          b.onclick = () => {
+            box.classList.add("hidden");
+            input.value = "";
+            nav(`#/messages/${encodeURIComponent(b.dataset.dmUser)}`);
+          };
+        });
+        box.classList.remove("hidden");
+      } catch {
+        box.classList.add("hidden");
+      }
+    }, 200);
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".dm-search-box")) box.classList.add("hidden");
+  });
 }
 
 function bindMessageForm() {
@@ -921,12 +1356,17 @@ function bindMessageForm() {
       if (file) fd.append("media", file);
       const { message } = await api(`/api/messages/${encodeURIComponent(state.conversation)}`, { method: "POST", body: fd });
       state.messages.push(message);
-      input.value = ""; fileInput.value = "";
+      input.value = "";
+      fileInput.value = "";
       renderMessages();
       const panel = $("#chat-panel");
-      setTimeout(() => { panel.scrollTop = panel.scrollHeight; }, 40);
+      setTimeout(() => {
+        panel.scrollTop = panel.scrollHeight;
+      }, 40);
       loadMessages(state.conversation);
-    } catch (err) { toast(err.message, true); }
+    } catch (err) {
+      toast(err.message, true);
+    }
   };
 }
 
@@ -943,68 +1383,108 @@ async function loadNotifications() {
   const list = $("#notifications-list");
   list.innerHTML = `<p class="muted">Loading...</p>`;
   try {
-    const { notifications } = await api("/api/notifications");
-    list.innerHTML = notifications.length ? notifications.map((n) => `
+    const [notifRes, reqRes] = await Promise.all([
+      api("/api/notifications"),
+      api("/api/users/me/follow-requests").catch(() => ({ users: [] })),
+    ]);
+    const reqHtml = reqRes.users?.length
+      ? `<div class="follow-requests-box">
+          <h3>Follow requests (${reqRes.users.length})</h3>
+          ${reqRes.users
+            .map(
+              (u) => `<div class="suggest-row">${avatarHTML(u, "avatar xs")}<div class="s-info"><span class="s-name" data-u="${esc(
+                u.username
+              )}">${esc(u.full_name || u.username)}</span><span class="s-sub">@${esc(u.username)}</span></div>
+                <button class="btn small primary" data-req-accept="${esc(u.username)}" type="button">Accept</button>
+                <button class="btn small" data-req-decline="${esc(u.username)}" type="button">Decline</button></div>`
+            )
+            .join("")}
+        </div>`
+      : "";
+    const notifsHtml = notifRes.notifications.length
+      ? notifRes.notifications
+          .map(
+            (n) => `
       <div class="notification ${n.read ? "" : "unread"}" data-id="${n.id}" data-post="${n.post_id || ""}" data-user="${esc(n.actor.username)}">
         ${avatarHTML(n.actor, "avatar sm")}
         <div class="n-text"><strong>${esc(n.actor.username)}</strong> ${esc(n.text)}</div>
         <span class="n-time">${esc(fmtDate(n.created_at))}</span>
-      </div>`).join("") : emptyState("", "No activity yet", "Likes, comments and new followers will show up here.");
-    $$(".notification", list).forEach((el) => el.onclick = async () => {
-      try { await api(`/api/notifications/${el.dataset.id}/read`, { method: "POST" }); } catch {}
-      if (el.dataset.post) nav(`#/post/${el.dataset.post}`);
-      else if (el.dataset.user) nav(`#/profile/${encodeURIComponent(el.dataset.user)}`);
+      </div>`
+          )
+          .join("")
+      : reqRes.users?.length
+      ? ""
+      : emptyState("", "No activity yet", "Likes, replies and new followers will show up here.");
+    list.innerHTML = reqHtml + notifsHtml;
+
+    $$("[data-u]", list).forEach((n) => (n.onclick = () => nav(`#/profile/${encodeURIComponent(n.dataset.u)}`)));
+    $$("[data-req-accept]", list).forEach((b) => {
+      b.onclick = async () => {
+        await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.reqAccept)}/accept`, { method: "POST" });
+        toast("Follow request accepted");
+        loadNotifications();
+      };
     });
-    renderBadges();
-  } catch (e) { list.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
-}
-
-// ── Search ────────────────────────────────────────────────────────────────
-function bindSearch() {
-  const input = $("#global-search");
-  const box = $("#search-results");
-  let t;
-  input.addEventListener("input", () => {
-    clearTimeout(t);
-    const q = input.value.trim();
-    if (!q) { box.classList.add("hidden"); box.innerHTML = ""; return; }
-    t = setTimeout(async () => {
-      try {
-        const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
-        const usersHtml = data.users.map((u) => `
-          <div class="search-item">
-            <button class="search-user" data-u="${esc(u.username)}">
-              ${avatarHTML(u, "avatar xs")}
-              <div class="s-info"><span class="s-name">${esc(u.username)}</span><span class="s-bio">${esc(u.full_name || u.bio || u.last_seen_text || "")}</span></div>
-            </button>
-            ${state.user && !u.isMe ? `<button class="btn-text search-follow" data-u="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}">${u.isFollowing ? "Following" : "Follow"}</button>` : ""}
-          </div>`).join("");
-        const tagsHtml = data.tags.map((tag) => `<button class="search-item search-tag" data-tag="#${esc(tag.tag)}"><span class="muted">#</span> ${esc(tag.tag)} <span class="muted" style="margin-left:auto">${tag.posts} posts</span></button>`).join("");
-        const postsHtml = data.posts.slice(0, 3).map((p) => `<button class="search-item search-post" data-post="${p.id}">${avatarHTML(p.author, "avatar xs")}<span class="s-name" style="margin-left:10px">${esc(p.author.username)}</span><span class="s-bio" style="margin-left:8px">${esc((p.content || "Shared media").slice(0, 45))}</span></button>`).join("");
-        box.innerHTML = (usersHtml || tagsHtml || postsHtml) + `<button class="search-item search-all" data-q="${esc(q)}" style="color:var(--accent);font-weight:600">See all results for “${esc(q)}”</button>`;
-        $$(".search-user", box).forEach((b) => b.onclick = () => { closeSearch(); nav(`#/profile/${encodeURIComponent(b.dataset.u)}`); });
-        $$(".search-tag", box).forEach((b) => b.onclick = () => { const q2 = b.dataset.tag; closeSearch(); searchFor(q2); });
-        $$(".search-post", box).forEach((b) => b.onclick = () => { closeSearch(); nav(`#/post/${b.dataset.post}`); });
-        $(".search-all", box).onclick = () => { const q2 = $(".search-all", box).dataset.q; closeSearch(); searchFor(q2); };
-        $$(".search-follow", box).forEach((btn) => btn.onclick = async (e) => {
-          e.stopPropagation();
-          const username = btn.dataset.u;
-          btn.disabled = true;
+    $$("[data-req-decline]", list).forEach((b) => {
+      b.onclick = async () => {
+        await api(`/api/users/me/follow-requests/${encodeURIComponent(b.dataset.reqDecline)}`, { method: "DELETE" });
+        loadNotifications();
+      };
+    });
+    $$(".notification", list).forEach(
+      (el) =>
+        (el.onclick = async () => {
           try {
-            const res = await api(`/api/users/${encodeURIComponent(username)}/follow`, { method: btn.dataset.following === "1" ? "DELETE" : "POST" });
-            btn.dataset.following = res.user.isFollowing ? "1" : "0";
-            btn.textContent = res.user.isRequested ? "Requested" : res.user.isFollowing ? "Following" : "Follow";
-          } catch (err) { toast(err.message, true); }
-          finally { btn.disabled = false; }
-        });
-        box.classList.remove("hidden");
-      } catch { box.classList.add("hidden"); }
-    }, 200);
-  });
-  document.addEventListener("click", (e) => { if (!e.target.closest(".search-wrap")) box.classList.add("hidden"); });
+            await api(`/api/notifications/${el.dataset.id}/read`, { method: "POST" });
+          } catch {}
+          if (el.dataset.post) nav(`#/post/${el.dataset.post}`);
+          else if (el.dataset.user) nav(`#/profile/${encodeURIComponent(el.dataset.user)}`);
+        })
+    );
+    renderBadges();
+  } catch (e) {
+    list.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
-function closeSearch() { $("#search-results").classList.add("hidden"); $("#global-search").value = ""; }
 
+function searchUserRowHTML(u) {
+  const followLabel = u.isRequested ? "Requested" : u.isFollowing ? "Following" : u.isPrivate ? "Request" : "Follow";
+  return `<div class="search-user-row">${avatarHTML(u, "avatar sm")}
+    <div class="s-info" style="cursor:pointer" data-profile="${esc(u.username)}"><strong>${esc(u.full_name || u.username)}</strong><div class="muted small">@${esc(u.username)}</div></div>
+    ${
+      state.user && !u.isMe
+        ? `<button class="btn small ${u.isFollowing || u.isRequested ? "" : "primary"}" data-sfollow="${esc(u.username)}" data-following="${u.isFollowing ? "1" : "0"}" data-requested="${u.isRequested ? "1" : "0"}" type="button">${followLabel}</button>
+           <button class="btn small" data-smsg="${esc(u.username)}" type="button">Message</button>`
+        : ""
+    }
+  </div>`;
+}
+
+function bindSearchUserActions(container) {
+  $$("[data-profile]", container).forEach((b) => (b.onclick = () => nav(`#/profile/${encodeURIComponent(b.dataset.profile)}`)));
+  $$("[data-smsg]", container).forEach((b) => (b.onclick = () => startMessageWith(b.dataset.smsg)));
+  $$("[data-sfollow]", container).forEach((btn) => {
+    btn.onclick = async () => {
+      const username = btn.dataset.sfollow;
+      const active = btn.dataset.following === "1" || btn.dataset.requested === "1";
+      btn.disabled = true;
+      try {
+        const res = await api(`/api/users/${encodeURIComponent(username)}/follow`, { method: active ? "DELETE" : "POST" });
+        const next = res.user;
+        btn.dataset.following = next.isFollowing ? "1" : "0";
+        btn.dataset.requested = next.isRequested ? "1" : "0";
+        btn.textContent = next.isRequested ? "Requested" : next.isFollowing ? "Following" : next.isPrivate ? "Request" : "Follow";
+        btn.classList.toggle("primary", !(next.isFollowing || next.isRequested));
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  });
+}
+
+// ── Search Page ───────────────────────────────────────────────────────────
 async function loadSearchPage(q) {
   setActiveNav("search");
   $("#view-search").classList.remove("hidden");
@@ -1012,32 +1492,53 @@ async function loadSearchPage(q) {
   const results = $("#search-page-results");
   if (q && input.value !== q) input.value = q;
   if (!q) {
-    results.innerHTML = `<p class="muted">Start typing above to search people, posts and hashtags.</p>`;
-    const trending = await api("/api/tags/trending").catch(() => ({ tags: [] }));
-    if (trending.tags.length) results.innerHTML = `<div class="search-section"><h3>Trending hashtags</h3><div class="tag-row">${trending.tags.map((t) => `<button class="tag-pill" data-tag="#${esc(t.tag)}">#${esc(t.tag)} · ${t.posts}</button>`).join("")}</div></div>`;
-    $$(".tag-pill", results).forEach((b) => b.onclick = () => searchFor(b.dataset.tag));
+    const [trending, suggested] = await Promise.all([
+      api("/api/tags/trending").catch(() => ({ tags: [] })),
+      api("/api/users/suggested?limit=20").catch(() => ({ users: [] })),
+    ]);
+    results.innerHTML = `
+      ${suggested.users.length ? `<div class="search-section"><h3>Suggested people</h3>${suggested.users.map(searchUserRowHTML).join("")}</div>` : ""}
+      ${trending.tags.length ? `<div class="search-section"><h3>Trending hashtags</h3><div class="tag-row">${trending.tags.map((t) => `<button class="tag-pill" data-tag="#${esc(t.tag)}" type="button">#${esc(t.tag)} · ${t.posts}</button>`).join("")}</div></div>` : ""}
+      ${!suggested.users.length && !trending.tags.length ? `<p class="muted">Start typing above to search people, threads and hashtags.</p>` : ""}`;
+    bindSearchUserActions(results);
+    $$(".tag-pill", results).forEach((b) => (b.onclick = () => searchFor(b.dataset.tag)));
     return;
   }
   results.innerHTML = `<p class="muted">Searching...</p>`;
   try {
     const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
-    const clean = q.replace(/^#/, "");
-    const users = data.users.map((u) => `<div class="search-user-row">${avatarHTML(u, "avatar sm")}<div class="s-info"><strong>${esc(u.username)}</strong><div class="muted">${esc(u.full_name || u.bio || "")}</div></div><button class="btn-text" data-profile="${esc(u.username)}">View</button></div>`).join("");
-    const tags = data.tags.map((t) => `<button class="tag-pill" data-tag="#${esc(t.tag)}">#${esc(t.tag)} · ${t.posts}</button>`).join("");
-    const posts = data.posts.map((p) => `<div class="search-grid-item" data-post="${p.id}">${p.image_url ? (p.media_type === "video" ? `<video src="${esc(p.image_url)}" muted></video>` : `<img src="${esc(p.image_url)}" alt="">`) : `<div style="padding:10px;font-size:12px">${esc((p.content || "Post").slice(0, 60))}</div>`}</div>`).join("");
+    const users = data.users.map(searchUserRowHTML).join("");
+    const tags = data.tags
+      .map((t) => `<button class="tag-pill" data-tag="#${esc(t.tag)}" type="button">#${esc(t.tag)} · ${t.posts}</button>`)
+      .join("");
+    const posts = data.posts
+      .map(
+        (p) =>
+          `<div class="search-grid-item" data-post="${p.id}">${
+            p.image_url
+              ? p.media_type === "video"
+                ? `<video src="${esc(p.image_url)}" muted></video>`
+                : `<img src="${esc(p.image_url)}" alt="">`
+              : `<div style="padding:10px;font-size:11.5px">${esc((p.content || "Thread").slice(0, 60))}</div>`
+          }</div>`
+      )
+      .join("");
     results.innerHTML = `
-      <div class="search-section"><h3>People</h3>${users || '<p class="muted">No people found.</p>'}</div>
-      <div class="search-section"><h3>Hashtags</h3><div class="tag-row">${tags || '<p class="muted">No hashtags found.</p>'}</div></div>
-      <div class="search-section"><h3>Posts</h3><div class="search-grid">${posts || '<p class="muted">No posts found.</p>'}</div></div>`;
-    $$("[data-profile]", results).forEach((b) => b.onclick = () => nav(`#/profile/${encodeURIComponent(b.dataset.profile)}`));
-    $$("[data-tag]", results).forEach((b) => b.onclick = () => searchFor(b.dataset.tag));
-    $$("[data-post]", results).forEach((b) => b.onclick = () => nav(`#/post/${b.dataset.post}`));
-  } catch (e) { results.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+      <div class="search-section"><h3>People</h3>${users || '<p class="muted small">No people found.</p>'}</div>
+      <div class="search-section"><h3>Hashtags</h3><div class="tag-row">${tags || '<p class="muted small">No hashtags found.</p>'}</div></div>
+      <div class="search-section"><h3>Threads</h3><div class="search-grid">${posts || '<p class="muted small">No threads found.</p>'}</div></div>`;
+    bindSearchUserActions(results);
+    $$("[data-tag]", results).forEach((b) => (b.onclick = () => searchFor(b.dataset.tag)));
+    $$("[data-post]", results).forEach((b) => (b.onclick = () => nav(`#/post/${b.dataset.post}`)));
+  } catch (e) {
+    results.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
 }
 
 let pageSearchTimer;
 function bindSearchPage() {
   const input = $("#search-page-input");
+  if (!input) return;
   input.addEventListener("input", () => {
     clearTimeout(pageSearchTimer);
     const q = input.value.trim();
@@ -1048,7 +1549,7 @@ function bindSearchPage() {
   });
 }
 
-// ── Modal helpers ─────────────────────────────────────────────────────────
+// ── Modal helpers & Routing ───────────────────────────────────────────────
 function closeModal(id) {
   const modal = $(`#${id}`);
   if (modal) modal.classList.add("hidden");
@@ -1060,7 +1561,10 @@ function closeModal(id) {
   if (id === "story-modal") clearStoryTimer();
   if (id === "create-modal") resetCreate();
 }
-function closeAllModals() { ["modal", "create-modal", "story-modal"].forEach(closeModal); }
+
+function closeAllModals() {
+  ["modal", "create-modal", "story-modal"].forEach(closeModal);
+}
 
 function showView(name) {
   $$(".view").forEach((v) => v.classList.add("hidden"));
@@ -1076,49 +1580,97 @@ async function refresh() {
 async function route() {
   state.route = parseHash();
   closeAllModals();
+  if (!state.user && !GUEST_ALLOWED_ROUTES.has(state.route.name)) {
+    if (location.hash && location.hash !== "#/" && location.hash !== "#/login") {
+      state.redirectAfterAuth = location.hash;
+    }
+    showView("auth");
+    setActiveNav("");
+    setAuthTab(false);
+    return;
+  }
   showView(state.route.name);
   switch (state.route.name) {
-    case "auth": setActiveNav(""); return;
-    case "explore": return loadExplore(state.route.param);
-    case "reels": return loadReels();
-    case "messages": return loadMessages(state.route.param);
-    case "notifications": return loadNotifications();
-    case "search": return loadSearchPage(state.route.param || "");
-    case "post": return loadPost(state.route.param);
-    case "saved": return loadSaved();
-    case "profile": return loadProfile(state.route.param);
-    default: return loadFeed();
+    case "auth":
+      setActiveNav("");
+      setAuthTab(state.route.param === "register");
+      return;
+    case "explore":
+      renderSuggestions();
+      renderTrending();
+      return loadExplore(state.route.param);
+    case "reels":
+      renderSuggestions();
+      renderTrending();
+      return loadReels();
+    case "messages":
+      renderSuggestions();
+      renderTrending();
+      return loadMessages(state.route.param);
+    case "notifications":
+      renderSuggestions();
+      renderTrending();
+      return loadNotifications();
+    case "search":
+      renderSuggestions();
+      renderTrending();
+      return loadSearchPage(state.route.param || "");
+    case "post":
+      renderSuggestions();
+      renderTrending();
+      return loadPost(state.route.param);
+    case "saved":
+      renderSuggestions();
+      renderTrending();
+      return loadSaved();
+    case "profile":
+      renderSuggestions();
+      renderTrending();
+      return loadProfile(state.route.param);
+    default:
+      return loadFeed();
   }
 }
 
 function bindAuth() {
   $$(".tab").forEach((tab) => {
-    tab.onclick = () => {
-      $$(".tab").forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      const login = tab.dataset.authTab === "login";
-      $("#login-form").classList.toggle("hidden", !login);
-      $("#register-form").classList.toggle("hidden", login);
-    };
+    tab.onclick = () => setAuthTab(tab.dataset.authTab === "register");
   });
+  $("#switch-to-register")?.addEventListener("click", () => setAuthTab(true));
+  $("#switch-to-login")?.addEventListener("click", () => setAuthTab(false));
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: fd.get("username"), password: fd.get("password") }) });
-      await loadMe(); toast("Welcome back!"); nav("#/");
-    } catch (err) { toast(err.message, true); }
+      await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username: fd.get("username"), password: fd.get("password") }),
+      });
+      await loadMe();
+      finishAuth("Welcome back!");
+    } catch (err) {
+      toast(err.message, true);
+    }
   };
   $("#register-form").onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api("/api/auth/register", { method: "POST", body: JSON.stringify({
-        username: fd.get("username"), full_name: fd.get("full_name"), phone: fd.get("phone"),
-        password: fd.get("password"), bio: fd.get("bio"),
-      }) });
-      await loadMe(); toast("Account created!"); nav("#/");
-    } catch (err) { toast(err.message, true); }
+      await api("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          username: fd.get("username"),
+          full_name: fd.get("full_name"),
+          phone: fd.get("phone"),
+          password: fd.get("password"),
+          bio: fd.get("bio"),
+        }),
+      });
+      await loadMe();
+      finishAuth("Account created!");
+    } catch (err) {
+      toast(err.message, true);
+    }
   };
 }
 
@@ -1139,17 +1691,25 @@ function bindUI() {
   });
   $("#create-btn").onclick = () => openCreate("post");
   $("#open-composer").onclick = () => openCreate("post");
-  $("#composer-story-btn").onclick = () => openCreate("story");
+  $("#new-reel-btn")?.addEventListener("click", () => openCreate("reel"));
+  $("#composer-story-btn")?.addEventListener("click", () => openCreate("story"));
+  $("#logout-dock-btn")?.addEventListener("click", logoutUser);
   $("#story-prev").onclick = prevStory;
   $("#story-next").onclick = nextStory;
-  $("#post-back-btn").onclick = () => history.length > 1 ? history.back() : nav("#/");
+  $("#post-back-btn").onclick = () => (history.length > 1 ? history.back() : nav("#/"));
   $("#mark-read-btn").onclick = async () => {
-    try { await api("/api/notifications/read", { method: "POST" }); renderBadges(); loadNotifications(); }
-    catch (e) { toast(e.message, true); }
+    try {
+      await api("/api/notifications/read", { method: "POST" });
+      renderBadges();
+      loadNotifications();
+    } catch (e) {
+      toast(e.message, true);
+    }
   };
   document.addEventListener("click", (e) => {
     const close = e.target.closest("[data-close]");
     if (close) closeModal(close.dataset.close);
+    if (!e.target.closest(".post-menu-wrap")) $$(".post-menu").forEach((m) => m.classList.add("hidden"));
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeAllModals();
@@ -1159,16 +1719,29 @@ function bindUI() {
     }
   });
   window.addEventListener("hashchange", route);
+  bindInlineComposer();
   bindMessageForm();
+  bindDmSearch();
   bindSearchPage();
 }
 
 (async function init() {
   bindCreate();
   bindAuth();
-  bindSearch();
   bindUI();
   await loadMe();
   await route();
   setInterval(renderBadges, 30000);
+  setInterval(() => {
+    if (state.user && state.route.name === "messages" && state.conversation) {
+      api(`/api/messages/${encodeURIComponent(state.conversation)}`)
+        .then((res) => {
+          if (res.messages.length !== state.messages.length) {
+            state.messages = res.messages;
+            renderMessages();
+          }
+        })
+        .catch(() => {});
+    }
+  }, 5000);
 })();
